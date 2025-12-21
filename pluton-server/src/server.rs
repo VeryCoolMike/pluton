@@ -5,7 +5,7 @@ use std::{
 use egui::epaint::text;
 use serde::{Deserialize, Serialize};
 use futures_channel::mpsc::{unbounded, UnboundedSender};
-use futures_util::{future, pin_mut, stream::TryStreamExt, StreamExt, SinkExt};
+use futures_util::{SinkExt, StreamExt, future::{self, join}, pin_mut, stream::TryStreamExt};
 use libsql::{Builder, params};
 
 use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions};
@@ -69,6 +69,21 @@ async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: Socke
     println!("{} has been accepted!", addr);
     println!("[DEBUG] {:?}", peer_map.lock().unwrap());
 
+
+    let broadcast_recipients: Vec<Tx> = {
+        let peers = peer_map.lock().unwrap();       
+        peers.iter().filter(|(peer_addr, _)| *peer_addr != &addr).map(|(_, peer)| peer.tx.clone()).collect()
+    };
+
+    let join_alert = definitions::UserStatusChange {
+        public_key: public_key,
+        address: String::new(),
+        status: definitions::UserStatus::Online
+    };
+    for tx in broadcast_recipients {
+        tx.unbounded_send(Message::Text(serde_json::to_string(&join_alert).expect("unable to serde").into())).unwrap();
+    }
+
     let broadcast_incoming = incoming.try_for_each(|msg| async {
         println!("Received a message from {}: {}", addr, msg.to_text().unwrap());
         match msg {
@@ -131,17 +146,6 @@ async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: Socke
             }
             _ => { } // idk bro
         }
-        /*
-        let peers = peer_map.lock().unwrap();
-
-        // We want to broadcast the message to everyone except ourselves.
-        let broadcast_recipients =
-            peers.iter().filter(|(peer_addr, _)| peer_addr != &&addr).map(|(_, ws_sink)| ws_sink);
-
-        for recp in broadcast_recipients {
-            recp.tx.unbounded_send(msg.clone()).unwrap();
-        }
-        */
 
         Ok(())
     });
