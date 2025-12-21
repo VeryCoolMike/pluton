@@ -78,7 +78,9 @@ pub enum HandshakeError {
 #[serde(tag = "type", content = "data")]
 pub enum TextNetworkMessage {
     ClientText(ClientTextMessage),
-    ServerText(ServerTextMessage)
+    ServerText(ServerTextMessage),
+    UserStatusChange(UserStatusChange),
+    ServerStatus(ServerStatus)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -93,4 +95,35 @@ pub struct ServerTextMessage {
     pub plaintext: String,
     pub sender: VerifyingKey,
     pub timestamp: i64 // Time from UNIX EPOCH
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum UserStatus {
+    Online,
+    DoNotDisturb,
+    Sleep,
+    Offline
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UserStatusChange {
+    pub public_key: VerifyingKey,
+    pub address: String,
+    pub status: UserStatus
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UserOverview {
+    pub public_key: VerifyingKey,
+    pub address: String
+}
+
+// Ouch, that's a lot of data over the network
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ServerStatus {
+    name: String,
+    users: Vec<UserOverview>,
+    message_channels: Vec<(String, u64)>, // (Name, ID)
+    voice_channels: Vec<(String, u64)>, // (Name, ID)
+    messages: [ServerTextMessage; 32], // Last 32 messages
 }
