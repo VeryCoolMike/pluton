@@ -77,7 +77,8 @@ pub enum HandshakeError {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", content = "data")]
 pub enum TextNetworkMessage {
-    Text(ClientTextMessage)
+    ClientText(ClientTextMessage),
+    ServerText(ServerTextMessage)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -89,7 +90,7 @@ pub struct ClientTextMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ServerTextMessage {
-    pub message: String,
+    pub plaintext: String,
     pub sender: VerifyingKey,
     pub timestamp: i64 // Time from UNIX EPOCH
 }

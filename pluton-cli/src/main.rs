@@ -89,14 +89,42 @@ async fn main() {
     let stdin_to_ws = stdin_rx.map(Ok).forward(outgoing);
     let ws_to_stdout = {
         incoming.for_each(|message| async {
+            handle_incoming(message.unwrap()).await;
+
+            /*
             let data = message.unwrap().into_data();
             tokio::io::stdout().write_all(&data).await.unwrap();
+            */
         })
     };
 
     pin_mut!(stdin_to_ws, ws_to_stdout);
     future::join(stdin_to_ws, ws_to_stdout).await;
-    futures_util::future::pending::<()>().await;
+}
+
+async fn handle_incoming(message: Message) {
+    println!("Received: {:?}", message.to_text().unwrap());
+    match message {
+        Message::Text(text) => {
+            let msg: definitions::TextNetworkMessage = match serde_json::from_str(&text) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Invalid message");
+                    return;
+                }
+            };
+
+            match msg {
+                definitions::TextNetworkMessage::ServerText(text_msg) => {
+                    println!("{:?}: {}", text_msg.sender, text_msg.plaintext);
+                }
+                _ => { } // Client messages are ignored
+            }
+        }
+        _ => { 
+            println!("Not implemented");
+        } // TODO!
+    }
 }
 
 // Our helper method which will read data from stdin and send it along the
@@ -115,14 +143,14 @@ async fn read_stdin(tx: futures_channel::mpsc::UnboundedSender<Message>, signing
 
         let string_message = String::from_utf8(buf.clone()).expect("stop yapping");
 
-        let text_message = definitions::TextNetworkMessage::Text(
+        let text_message = definitions::TextNetworkMessage::ClientText(
             definitions::ClientTextMessage {
                 plaintext: string_message.clone(),
                 signed_message: sign_message(&string_message, &signing_key).await,
                 id: 0
             }
         );
-        println!("{:?}", text_message);
+        println!("Sending: {:?}", text_message);
         tx.unbounded_send(Message::Text(serde_json::to_string(&text_message).expect("couldnt convert").into())).unwrap();
     }
 }

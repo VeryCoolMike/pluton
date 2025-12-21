@@ -82,7 +82,7 @@ async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: Socke
                 };
 
                 match msg {
-                    definitions::TextNetworkMessage::Text(text_msg) => {
+                    definitions::TextNetworkMessage::ClientText(text_msg) => {
                         // We should probably check if they're being legit
 
                         let is_signed_properly = verify_signature(
@@ -101,11 +101,11 @@ async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: Socke
                         let since_the_epoch = time_now.duration_since(UNIX_EPOCH).unwrap();
                         let since_epoch_seconds = since_the_epoch.as_secs() as i64;
 
-                        let broadcast_message = definitions::ServerTextMessage {
-                            message: text_msg.plaintext,
+                        let broadcast_message = definitions::TextNetworkMessage::ServerText(definitions::ServerTextMessage {
+                            plaintext: text_msg.plaintext,
                             sender: public_key,
                             timestamp: since_epoch_seconds
-                        };
+                        });
 
 
                         let peers = peer_map.lock().unwrap();
@@ -113,13 +113,14 @@ async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: Socke
                         let self_ping = true;
 
                         let broadcast_recipients =
-                            peers.iter().filter(|(peer_addr, _)| !self_ping || *peer_addr != &addr).map(|(_, ws_sink)| ws_sink);
+                            peers.iter().filter(|(peer_addr, _)| self_ping || *peer_addr != &addr).map(|(_, ws_sink)| ws_sink);
 
                         for recp in broadcast_recipients {
                             println!("Sending to {:?}", recp.public_key);
-                            recp.tx.unbounded_send(Message::Text(serde_json::to_string(&broadcast_message).expect("").into())).unwrap();
+                            recp.tx.unbounded_send(Message::Text(serde_json::to_string(&broadcast_message).expect("unable to serde").into())).unwrap();
                         }
                     }
+                    _ => { } // Server messages are ignored
                 }
             }
             Message::Binary(binary_msg) => {
