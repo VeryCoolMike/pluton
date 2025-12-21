@@ -1,0 +1,15 @@
+[package]
+name = "pluton-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+confy = "2.0.0"
+ed25519-dalek = "2.2.0"
+futures-channel = "0.3.31"
+futures-util = "0.3.31"
+pluton-core = { path = "../pluton-core/" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+tokio = "1.48.0"
+tokio-tungstenite = "0.28.0"

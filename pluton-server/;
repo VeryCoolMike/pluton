@@ -1,0 +1,46 @@
+use std::env;
+
+use cliclack::{clear_screen, intro, outro, input, log, outro_cancel, spinner};
+use console::{style, Key, Term};
+
+fn main() -> std::io::Result<()> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "--create_server" => {
+                clear_screen()?
+                intro(style(" Pluton Server Creation ").on_cyan().black())?;
+                let server_name: String = input("What would you like your server to be called?")
+                    .placeholder("")
+                    .validate(|input: &String| {
+                        if input.is_empty() {
+                            Err("Please enter a name.")
+                        } else if input.len() > 64 {
+                            Err("A server's name must be 64 or less characters.")
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .interact()?;
+            }
+            "--start_server" => {
+                println!("Creating server...");
+                // put your server creation logic here
+            }
+            "--configure_server" => {
+                println!("Creating server...");
+                // put your server creation logic here
+            }
+            "--help" => {
+                println!("Available options:\n--create_server\n--start_server\n--configure_server\n--help");
+            }
+            other => {
+                eprintln!("Unknown argument: {}", other);
+            }
+        }
+    } else {
+        println!("No arguments provided. Try --help");
+    }
+
+    Ok(())
+}

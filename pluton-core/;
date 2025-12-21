@@ -1,0 +1,62 @@
+use argon2::{
+    password_hash::{
+        rand_core::OsRng,
+        PasswordHash, PasswordHasher, SaltString
+    },
+    Argon2
+};
+use zeroize::Zeroize;
+use ed25519_dalek::{SigningKey, Signature, Signer, VerifyingKey, Verifier};
+use aes_gcm::{
+    aead::{Aead, AeadCore, KeyInit},
+    Aes256Gcm, Key
+};
+
+// Returns a 
+// 1. ciphertext
+// 2. nonce
+// 3. salt
+// 4. public key
+// 5. private key
+type KeyPairInformation = (Vec<u8>, Vec<u8>, SaltString, VerifyingKey);
+
+pub fn generate_key_pair(password: &str) -> Result<KeyPairInformation, String> {
+    // Generating the password hash with Argon2
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let mut password_hash_bytes = [0u8; 32];
+    let password_hash = argon2
+        .hash_password_into(password.as_bytes(), salt, &mut password_hash_bytes)?
+        .map_err(|e| format!("Argon2 error: {:?}", e))?
+        .to_string();
+    let parsed_hash = PasswordHash::new(&password_hash)
+        .map_err(|e| format!("Argon2 parse error: {:?}", e))?;
+
+    // Generating the keypair (public and private key)
+    let mut csprng = OsRng;
+    let signing_key: SigningKey = SigningKey::generate(&mut csprng); // The private key
+    let verifying_key: VerifyingKey = signing_key.verifying_key(); // The public key
+    
+    // Now onto encrypting the private key
+    let mut key_bytes = [0u8; 32];
+    key_bytes.copy_from_slice(&parsed_hash.hash.unwrap().as_bytes()[..32]);
+    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+    let cipher = Aes256Gcm::new(key);
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(&nonce, signing_key.as_bytes().as_ref())
+        .map_err(|e| format!("AES-GCM error: {:?}", e))?;
+    
+
+    Ok((ciphertext, nonce.to_vec(), salt, verifying_key))
+}
+
+pub fn sign_message(message: &str, signing_key: SigningKey) -> Signature {
+    let signature: Signature = signing_key.sign(message.as_bytes());
+
+    signature
+}
+
+pub fn verify_signature(message: &str, signature: Signature, verifying_key: VerifyingKey) -> Result<(), ed25519_dalek::ed25519::Error>  {
+    verifying_key.verify(message.as_bytes(), &signature)
+}

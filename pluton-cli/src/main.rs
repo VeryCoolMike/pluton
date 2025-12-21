@@ -1,0 +1,128 @@
+// The is a very simple server for debugging and development purposes.
+// It is probably unsafe, crashes when fed incorrect data, poorly written, and might not reflect the pluton protocol.
+// Do not use this.
+
+use std::env;
+use std::io;
+use std::string;
+
+use futures_util::{future, pin_mut, StreamExt, SinkExt};
+use pluton_core::cryptography::get_signing_key;
+use pluton_core::cryptography::sign_message;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use serde::{Serialize, Deserialize};
+use ed25519_dalek::SigningKey;
+
+use pluton_core::networking::definitions;
+use pluton_core::helper;
+
+
+#[tokio::main]
+async fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    if let [_, command, username, password] = args.as_slice() {
+        if command.trim() == "--create_account" {
+            pluton_core::account_management::sign_up(username.to_string(), password.to_string()).await;
+            return
+        }
+    }
+
+    if !pluton_core::account_management::check_account_exists().await {
+        println!("An account is required! Create one with --create_account [USERNAME] [PASSWORD]");
+        return
+    }
+
+    println!("What is your password? ");
+    let mut raw_password = String::new();
+    io::stdin()
+        .read_line(&mut raw_password)
+        .expect("Failed to read line");
+    let user_password = raw_password.trim();
+
+    let signing_key = get_signing_key(user_password).await.expect("im too lazy to handle errors");
+
+
+    let url =
+        env::args().nth(1).unwrap_or_else(|| String::from("ws://127.0.0.1:6767"));
+
+    let (stdin_tx, stdin_rx) = futures_channel::mpsc::unbounded();
+    tokio::spawn(read_stdin(stdin_tx.clone(), signing_key.clone()));
+
+    let (ws_stream, _) = connect_async(&url).await.expect("Failed to connect");
+    println!("WebSocket handshake has been successfully completed");
+
+    let (mut outgoing, mut incoming) = ws_stream.split(); // SplitSink and SplitStream
+
+    let cfg: pluton_core::account_management::Settings = if let Ok(settings) = confy::load("pluton", None) {
+        settings
+    } else {
+        eprintln!("[cli] Unable to load settings");
+        panic!("[cli] Unable to load settings");
+    };
+
+    let username = cfg.username;
+
+    let public_key = if let Ok(key) = helper::general::vec_to_verifying_key(helper::base64::from_base64(cfg.verifying_key)) {
+        key
+    } else {
+        eprintln!("Failed to get verifying key");
+        panic!("Failed to get verifying key");
+    };
+
+    let handshake_result = pluton_core::networking::auth_handshake::auth_handshake_client(
+        &mut outgoing,
+        &mut incoming,
+        &username,
+        public_key,
+        signing_key
+    ).await;
+
+    if handshake_result == Ok(definitions::HandshakeStatus::Complete) {
+        println!("Successful handshake");
+    } else {
+        println!("Could not complete handshake: {:?}", handshake_result);
+    }
+    
+
+    let stdin_to_ws = stdin_rx.map(Ok).forward(outgoing);
+    let ws_to_stdout = {
+        incoming.for_each(|message| async {
+            let data = message.unwrap().into_data();
+            tokio::io::stdout().write_all(&data).await.unwrap();
+        })
+    };
+
+    pin_mut!(stdin_to_ws, ws_to_stdout);
+    future::join(stdin_to_ws, ws_to_stdout).await;
+    futures_util::future::pending::<()>().await;
+}
+
+// Our helper method which will read data from stdin and send it along the
+// sender provided.
+async fn read_stdin(tx: futures_channel::mpsc::UnboundedSender<Message>, signing_key: SigningKey) {
+    let mut stdin = tokio::io::stdin();
+    loop {
+        let mut buf = vec![0; 1024];
+        let n = match stdin.read(&mut buf).await {
+            Err(_) | Ok(0) => break,
+            Ok(n) => n,
+        };
+        buf.truncate(n);
+
+        // Text Message Construction
+
+        let string_message = String::from_utf8(buf.clone()).expect("stop yapping");
+
+        let text_message = definitions::TextNetworkMessage::Text(
+            definitions::ClientTextMessage {
+                plaintext: string_message.clone(),
+                signed_message: sign_message(&string_message, &signing_key).await,
+                id: 0
+            }
+        );
+        println!("{:?}", text_message);
+        tx.unbounded_send(Message::Text(serde_json::to_string(&text_message).expect("couldnt convert").into())).unwrap();
+    }
+}
