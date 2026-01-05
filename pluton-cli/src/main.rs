@@ -4,14 +4,12 @@
 
 use std::env;
 use std::io;
-use std::string;
 
 use futures_util::{future, pin_mut, StreamExt, SinkExt};
 use pluton_core::cryptography::get_signing_key;
 use pluton_core::cryptography::sign_message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use serde::{Serialize, Deserialize};
 use ed25519_dalek::SigningKey;
 
 use pluton_core::networking::definitions;
@@ -76,6 +74,7 @@ async fn main() {
         &mut incoming,
         &username,
         public_key,
+        String::new(),
         signing_key
     ).await;
 
@@ -90,11 +89,6 @@ async fn main() {
     let ws_to_stdout = {
         incoming.for_each(|message| async {
             handle_incoming(message.unwrap()).await;
-
-            /*
-            let data = message.unwrap().into_data();
-            tokio::io::stdout().write_all(&data).await.unwrap();
-            */
         })
     };
 
@@ -116,7 +110,13 @@ async fn handle_incoming(message: Message) {
 
             match msg {
                 definitions::TextNetworkMessage::ServerText(text_msg) => {
-                    println!("{:?}: {}", text_msg.sender, text_msg.plaintext);
+                    println!("{} - {:?}: {}", text_msg.timestamp, text_msg.sender, text_msg.plaintext);
+                }
+                definitions::TextNetworkMessage::ServerStatus(server_status) => {
+                    println!("Welcome!");
+                    for text_msg in server_status.messages {
+                        println!("{} - {:?}: {}", text_msg.timestamp, text_msg.sender, text_msg.plaintext);
+                    }
                 }
                 _ => { } // Client messages are ignored
             }

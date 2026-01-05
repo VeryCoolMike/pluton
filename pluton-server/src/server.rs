@@ -2,31 +2,44 @@ use std::{
     collections::HashMap, env, fmt::Binary, net::SocketAddr, sync::{Arc, Mutex}, time::{SystemTime, UNIX_EPOCH}
 };
 
-use egui::epaint::text;
-use serde::{Deserialize, Serialize};
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{SinkExt, StreamExt, future::{self, join}, pin_mut, stream::TryStreamExt};
 use libsql::{Builder, params};
 
-use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions};
+use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions::{self, UserOverview}};
+mod database;
 use ed25519_dalek::VerifyingKey;
 
 use tokio::{net::{TcpListener, TcpStream}, sync::broadcast};
-use tokio_tungstenite::tungstenite::protocol::Message;
+use tokio_tungstenite::tungstenite::{handshake::server, protocol::Message};
 
 type Tx = UnboundedSender<Message>;
+
+#[derive(Debug)]
+pub struct ServerInfo {
+    pub name: String,
+    pub message_channels: Vec<(String, u64)>,
+    pub voice_channels: Vec<(String, u64)>
+}
 
 #[derive(Debug)]
 struct PeerInfo {
     username: String,
     tx: Tx,
     public_key: VerifyingKey,
-    permission: u8
+    address: String,
+    permission: u8,
+    status: definitions::UserStatus
 }
 type PeerMap = Arc<Mutex<HashMap<SocketAddr, PeerInfo>>>;
 
-
-async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: SocketAddr, conn: libsql::Connection) {
+async fn handle_connection(
+    peer_map: PeerMap,
+    raw_stream: TcpStream,
+    addr: SocketAddr,
+    database: Arc<libsql::Database>,
+    server_info: Arc<ServerInfo>
+) {
     println!("Incoming TCP connection from: {}", addr);
 
     let ws_stream = tokio_tungstenite::accept_async(raw_stream)
@@ -55,13 +68,18 @@ async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: Socke
 
     // At this point, the client has succesfully authenticated themselves
 
+    let conn = database.connect().unwrap();
+
     // Insert the write part of this peer to the peer map.
     let (tx, rx) = unbounded();
+    
     let info = PeerInfo {
         username: join_request.username,
         tx,
         public_key: join_request.public_key,
-        permission: 0
+        address: join_request.address,
+        permission: 0,
+        status: definitions::UserStatus::Online
     };
     let public_key = info.public_key.clone();
 
@@ -84,6 +102,32 @@ async fn handle_connection(peer_map: PeerMap, raw_stream: TcpStream, addr: Socke
         tx.unbounded_send(Message::Text(serde_json::to_string(&join_alert).expect("unable to serde").into())).unwrap();
     }
 
+    // Let's give the new client a present! Data!
+
+    let mut users: Vec<UserOverview> = vec![];
+
+    { // Separate scope because I'm scared of mutexes
+        let peers = peer_map.lock().unwrap();
+        for user in peers.iter() {
+            users.push(
+                definitions::UserOverview { 
+                    public_key: user.1.public_key.clone(),
+                    address: user.1.address.clone()
+                }
+            )
+        }
+    }
+
+    let server_status_message = definitions::TextNetworkMessage::ServerStatus(definitions::ServerStatus {
+        name: server_info.name.clone(),
+        users: users,
+        message_channels: server_info.message_channels.clone(),
+        voice_channels: server_info.voice_channels.clone(),
+        messages: database::get_messages(0..32).await
+    });
+
+    let _ = outgoing.send(Message::Text(serde_json::to_string(&server_status_message).expect("unable to serde").into())).await;
+    
     let broadcast_incoming = incoming.try_for_each(|msg| async {
         println!("Received a message from {}: {}", addr, msg.to_text().unwrap());
         match msg {
@@ -166,25 +210,35 @@ pub async fn start_server() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let db = Builder::new_local("server_data.db").build().await?;
+    let db = Arc::new(
+        Builder::new_local("server_data.db").build().await?
+    );
     let conn = db.connect()?;
 
     let mut rows = conn.query(
         "
-            SELECT server_ip, server_port FROM server
+            SELECT server_ip, server_port, server_name FROM server
         "
     , params![]).await?;
 
     let mut addr: String = String::new();
+    let mut server_name: String = String::new();
 
     if let Some(row) = rows.next().await? {
         let ip: String = row.get(0)?;
         let port: String = row.get(1)?;
+        server_name = row.get(2)?;
         addr = format!("{}:{}", ip, port);
         println!("Attempting to connect to {}", ip);
     }
 
     let state = PeerMap::new(Mutex::new(HashMap::new()));
+
+    let server_info = Arc::new(ServerInfo{
+        name: server_name,
+        message_channels: vec![(String::from("general"), 0)],
+        voice_channels: Vec::new()
+    });
 
     // Create the event loop and TCP listener we'll accept connections on.
     let try_socket = TcpListener::bind(&addr).await;
@@ -193,7 +247,13 @@ pub async fn start_server() -> anyhow::Result<()> {
 
     // Let's spawn the handling of each connection in a separate task.
     while let Ok((stream, addr)) = listener.accept().await {
-        tokio::spawn(handle_connection(state.clone(), stream, addr, conn.clone()));
+        tokio::spawn(handle_connection(
+            state.clone(),
+            stream,
+            addr,
+            db.clone(),
+            server_info.clone()
+        ));
     }
 
     Ok(())

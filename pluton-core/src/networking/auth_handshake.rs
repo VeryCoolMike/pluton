@@ -16,12 +16,14 @@ pub async fn auth_handshake_client(
     incoming: &mut SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     username: &str,
     public_key: VerifyingKey,
+    address: String,
     signing_key: SigningKey
 ) -> Result<definitions::HandshakeStatus, definitions::HandshakeError> {
 
     let handshake_start = definitions::ClientHandshakeStart {
         username: username.to_string(),
         public_key: public_key,
+        address: address,
         version: definitions::VERSION
     };
     let request_msg = Message::Text(
