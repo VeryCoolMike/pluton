@@ -30,6 +30,7 @@ pub enum ClientAuthMessage {
 pub struct ClientHandshakeStart {
     pub username: String,
     pub public_key: VerifyingKey,
+    pub address: String,
     pub version: u32
 }
 
@@ -118,12 +119,12 @@ pub struct UserOverview {
     pub address: String
 }
 
-// Ouch, that's a lot of data over the network
+// Ouch, that's could be a lot of data, maybe implement streaming later
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ServerStatus {
-    name: String,
-    users: Vec<UserOverview>,
-    message_channels: Vec<(String, u64)>, // (Name, ID)
-    voice_channels: Vec<(String, u64)>, // (Name, ID)
-    messages: [ServerTextMessage; 32], // Last 32 messages
+    pub name: String,
+    pub users: Vec<UserOverview>,
+    pub message_channels: Vec<(String, u64)>, // (Name, ID)
+    pub voice_channels: Vec<(String, u64)>, // (Name, ID)
+    pub messages: Vec<ServerTextMessage>, // Last 32 messages
 }
