@@ -5,16 +5,30 @@
 use std::env;
 use std::io;
 
+use ed25519_dalek::VerifyingKey;
 use futures_util::{future, pin_mut, StreamExt, SinkExt};
 use pluton_core::cryptography::get_signing_key;
 use pluton_core::cryptography::sign_message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use ed25519_dalek::SigningKey;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use pluton_core::networking::definitions;
 use pluton_core::helper;
+mod cli_helper;
 
+struct Peer {
+    username: String
+}
+
+struct ClientState {
+    peers: Vec<HashMap<VerifyingKey, Peer>>,
+    current_message_id: u32,
+    signing_key: SigningKey
+}
 
 #[tokio::main]
 async fn main() {
@@ -39,14 +53,20 @@ async fn main() {
         .expect("Failed to read line");
     let user_password = raw_password.trim();
 
+    // Now connecting to server
+
     let signing_key = get_signing_key(user_password).await.expect("im too lazy to handle errors");
 
+    let client_state = Arc::new(Mutex::new(ClientState {
+        peers: vec![],
+        current_message_id: 0,
+        signing_key: signing_key
+    }));
 
-    let url =
-        env::args().nth(1).unwrap_or_else(|| String::from("ws://127.0.0.1:6767"));
+    let url = env::args().nth(1).unwrap_or_else(|| String::from("ws://127.0.0.1:6767"));
 
     let (stdin_tx, stdin_rx) = futures_channel::mpsc::unbounded();
-    tokio::spawn(read_stdin(stdin_tx.clone(), signing_key.clone()));
+    tokio::spawn(read_stdin(stdin_tx.clone(), client_state.clone()));
 
     let (ws_stream, _) = connect_async(&url).await.expect("Failed to connect");
     println!("WebSocket handshake has been successfully completed");
@@ -75,7 +95,7 @@ async fn main() {
         &username,
         public_key,
         String::new(),
-        signing_key
+        client_state.lock().await.signing_key.clone()
     ).await;
 
     if handshake_result == Ok(definitions::HandshakeStatus::Complete) {
@@ -84,11 +104,12 @@ async fn main() {
         println!("Could not complete handshake: {:?}", handshake_result);
     }
     
+    // Authenticated with the server
 
     let stdin_to_ws = stdin_rx.map(Ok).forward(outgoing);
     let ws_to_stdout = {
         incoming.for_each(|message| async {
-            handle_incoming(message.unwrap()).await;
+            handle_incoming(message.unwrap(), client_state.clone()).await;
         })
     };
 
@@ -96,7 +117,7 @@ async fn main() {
     future::join(stdin_to_ws, ws_to_stdout).await;
 }
 
-async fn handle_incoming(message: Message) {
+async fn handle_incoming(message: Message, client_state: Arc<Mutex<ClientState>>) {
     println!("Received: {:?}", message.to_text().unwrap());
     match message {
         Message::Text(text) => {
@@ -129,7 +150,7 @@ async fn handle_incoming(message: Message) {
 
 // Our helper method which will read data from stdin and send it along the
 // sender provided.
-async fn read_stdin(tx: futures_channel::mpsc::UnboundedSender<Message>, signing_key: SigningKey) {
+async fn read_stdin(tx: futures_channel::mpsc::UnboundedSender<Message>, client_state: Arc<Mutex<ClientState>>) {
     let mut stdin = tokio::io::stdin();
     loop {
         let mut buf = vec![0; 1024];
@@ -143,14 +164,17 @@ async fn read_stdin(tx: futures_channel::mpsc::UnboundedSender<Message>, signing
 
         let string_message = String::from_utf8(buf.clone()).expect("stop yapping");
 
+        let signing_key = &client_state.lock().await.signing_key;
+
         let text_message = definitions::TextNetworkMessage::ClientText(
             definitions::ClientTextMessage {
                 plaintext: string_message.clone(),
                 signed_message: sign_message(&string_message, &signing_key).await,
-                id: 0
+                id: client_state.lock().await.current_message_id
             }
         );
         println!("Sending: {:?}", text_message);
         tx.unbounded_send(Message::Text(serde_json::to_string(&text_message).expect("couldnt convert").into())).unwrap();
+        client_state.lock().await.current_message_id += 1;
     }
 }
