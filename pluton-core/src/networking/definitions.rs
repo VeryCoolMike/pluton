@@ -116,7 +116,8 @@ pub struct UserStatusChange {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UserOverview {
     pub public_key: VerifyingKey,
-    pub address: String
+    pub address: String,
+    pub username: String
 }
 
 // Ouch, that's could be a lot of data, maybe implement streaming later

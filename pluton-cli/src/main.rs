@@ -18,14 +18,17 @@ use tokio::sync::Mutex;
 
 use pluton_core::networking::definitions;
 use pluton_core::helper;
+
 mod cli_helper;
 
+#[derive(Clone, Debug)]
 struct Peer {
-    username: String
+    username: String,
+    address: String
 }
 
 struct ClientState {
-    peers: Vec<HashMap<VerifyingKey, Peer>>,
+    peers: HashMap<VerifyingKey, Peer>,
     current_message_id: u32,
     signing_key: SigningKey
 }
@@ -34,31 +37,13 @@ struct ClientState {
 async fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if let [_, command, username, password] = args.as_slice() {
-        if command.trim() == "--create_account" {
-            pluton_core::account_management::sign_up(username.to_string(), password.to_string()).await;
-            return
-        }
-    }
-
-    if !pluton_core::account_management::check_account_exists().await {
-        println!("An account is required! Create one with --create_account [USERNAME] [PASSWORD]");
-        return
-    }
-
-    println!("What is your password? ");
-    let mut raw_password = String::new();
-    io::stdin()
-        .read_line(&mut raw_password)
-        .expect("Failed to read line");
-    let user_password = raw_password.trim();
-
-    // Now connecting to server
-
-    let signing_key = get_signing_key(user_password).await.expect("im too lazy to handle errors");
-
+    let signing_key = match cli_helper::login(args).await {
+        Some(key) => key,
+        None => return,
+    };
+       
     let client_state = Arc::new(Mutex::new(ClientState {
-        peers: vec![],
+        peers: HashMap::new(),
         current_message_id: 0,
         signing_key: signing_key
     }));
@@ -102,6 +87,7 @@ async fn main() {
         println!("Successful handshake");
     } else {
         println!("Could not complete handshake: {:?}", handshake_result);
+        return;
     }
     
     // Authenticated with the server
@@ -109,43 +95,12 @@ async fn main() {
     let stdin_to_ws = stdin_rx.map(Ok).forward(outgoing);
     let ws_to_stdout = {
         incoming.for_each(|message| async {
-            handle_incoming(message.unwrap(), client_state.clone()).await;
+            cli_helper::handle_incoming(message.unwrap(), client_state.clone()).await;
         })
     };
 
     pin_mut!(stdin_to_ws, ws_to_stdout);
     future::join(stdin_to_ws, ws_to_stdout).await;
-}
-
-async fn handle_incoming(message: Message, client_state: Arc<Mutex<ClientState>>) {
-    println!("Received: {:?}", message.to_text().unwrap());
-    match message {
-        Message::Text(text) => {
-            let msg: definitions::TextNetworkMessage = match serde_json::from_str(&text) {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("Invalid message");
-                    return;
-                }
-            };
-
-            match msg {
-                definitions::TextNetworkMessage::ServerText(text_msg) => {
-                    println!("{} - {:?}: {}", text_msg.timestamp, text_msg.sender, text_msg.plaintext);
-                }
-                definitions::TextNetworkMessage::ServerStatus(server_status) => {
-                    println!("Welcome!");
-                    for text_msg in server_status.messages {
-                        println!("{} - {:?}: {}", text_msg.timestamp, text_msg.sender, text_msg.plaintext);
-                    }
-                }
-                _ => { } // Client messages are ignored
-            }
-        }
-        _ => { 
-            println!("Not implemented");
-        } // TODO!
-    }
 }
 
 // Our helper method which will read data from stdin and send it along the
