@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, env, fmt::Binary, net::SocketAddr, sync::{Arc, Mutex}, time::{SystemTime, UNIX_EPOCH}
+    collections::HashMap, env, fmt::Binary, net::SocketAddr, sync::Arc, time::{SystemTime, UNIX_EPOCH}
 };
 
 use futures_channel::mpsc::{unbounded, UnboundedSender};
@@ -10,7 +10,7 @@ use pluton_core::{cryptography::{sign_message, verify_signature}, networking::de
 mod database;
 use ed25519_dalek::VerifyingKey;
 
-use tokio::{net::{TcpListener, TcpStream}, sync::broadcast};
+use tokio::{net::{TcpListener, TcpStream}, sync::{broadcast, Mutex}};
 use tokio_tungstenite::tungstenite::{handshake::server, protocol::Message};
 
 type Tx = UnboundedSender<Message>;
@@ -83,13 +83,13 @@ async fn handle_connection(
     };
     let public_key = info.public_key.clone();
 
-    peer_map.lock().unwrap().insert(addr, info);
+    peer_map.lock().await.insert(addr, info);
     println!("{} has been accepted!", addr);
-    println!("[DEBUG] {:?}", peer_map.lock().unwrap());
+    println!("[DEBUG] {:?}", peer_map.lock().await);
 
 
     let broadcast_recipients: Vec<Tx> = {
-        let peers = peer_map.lock().unwrap();       
+        let peers = peer_map.lock().await; 
         peers.iter().filter(|(peer_addr, _)| *peer_addr != &addr).map(|(_, peer)| peer.tx.clone()).collect()
     };
 
@@ -107,12 +107,13 @@ async fn handle_connection(
     let mut users: Vec<UserOverview> = vec![];
 
     { // Separate scope because I'm scared of mutexes
-        let peers = peer_map.lock().unwrap();
+        let peers = peer_map.lock().await;
         for user in peers.iter() {
             users.push(
                 definitions::UserOverview { 
                     public_key: user.1.public_key.clone(),
-                    address: user.1.address.clone()
+                    address: user.1.address.clone(),
+                    username: user.1.username.clone()
                 }
             )
         }
@@ -167,7 +168,7 @@ async fn handle_connection(
                         });
 
 
-                        let peers = peer_map.lock().unwrap();
+                        let peers = peer_map.lock().await;
 
                         let self_ping = true;
 
@@ -186,7 +187,7 @@ async fn handle_connection(
                 // TODO!
             }
             Message::Close(_) => {
-                peer_map.lock().unwrap().remove(&addr);
+                peer_map.lock().await.remove(&addr);
             }
             _ => { } // idk bro
         }
@@ -200,7 +201,7 @@ async fn handle_connection(
     future::select(broadcast_incoming, receive_from_others).await;
 
     println!("{} disconnected", &addr);
-    peer_map.lock().unwrap().remove(&addr);
+    peer_map.lock().await.remove(&addr);
 }
 
 pub async fn start_server() -> anyhow::Result<()> {
