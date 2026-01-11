@@ -78,6 +78,20 @@ pub async fn create_server() -> anyhow::Result<()> {
         );", ()
     ).await?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY,
+            sender BLOB,
+            plaintext TEXT,
+            timestamp INTEGER            
+        );", ()
+    ).await?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_time_id
+        ON messages(timestamp DESC, id DESC);", ()
+    ).await?;
+
     outro("Server has been made, please run --start_server")?;
 
     Ok(())

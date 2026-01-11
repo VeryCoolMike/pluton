@@ -15,6 +15,24 @@ use tokio_tungstenite::tungstenite::{handshake::server, protocol::Message};
 
 type Tx = UnboundedSender<Message>;
 
+async fn retry<T, E, F, Fut>(mut f: F, retries: usize) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+{
+    let mut last_err = None;
+
+    for _ in 0..retries {
+        match f().await {
+            Ok(v) => return Ok(v),
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    Err(last_err.unwrap())
+}
+
+
 #[derive(Debug)]
 pub struct ServerInfo {
     pub name: String,
@@ -119,12 +137,17 @@ async fn handle_connection(
         }
     }
 
+    let last_messages = retry(
+        || database::get_messages(0..32, database.clone()),
+        3,
+    ).await.expect("unable to get recent messages after 3 retries");
+
     let server_status_message = definitions::TextNetworkMessage::ServerStatus(definitions::ServerStatus {
         name: server_info.name.clone(),
         users: users,
         message_channels: server_info.message_channels.clone(),
         voice_channels: server_info.voice_channels.clone(),
-        messages: database::get_messages(0..32).await
+        messages: last_messages
     });
 
     let _ = outgoing.send(Message::Text(serde_json::to_string(&server_status_message).expect("unable to serde").into())).await;
