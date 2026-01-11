@@ -119,17 +119,20 @@ async fn read_stdin(tx: futures_channel::mpsc::UnboundedSender<Message>, client_
 
         let string_message = String::from_utf8(buf.clone()).expect("stop yapping");
 
-        let signing_key = &client_state.lock().await.signing_key;
+        let mut client_lock = client_state.lock().await;
+        let signing_key = client_lock.signing_key.clone();
+        let current_id = client_lock.current_message_id;
+        client_lock.current_message_id += 1;
+        drop(client_lock);
 
         let text_message = definitions::TextNetworkMessage::ClientText(
             definitions::ClientTextMessage {
                 plaintext: string_message.clone(),
                 signed_message: sign_message(&string_message, &signing_key).await,
-                id: client_state.lock().await.current_message_id
+                id: current_id
             }
         );
         println!("Sending: {:?}", text_message);
         tx.unbounded_send(Message::Text(serde_json::to_string(&text_message).expect("couldnt convert").into())).unwrap();
-        client_state.lock().await.current_message_id += 1;
     }
 }

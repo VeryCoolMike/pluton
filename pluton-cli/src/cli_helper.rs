@@ -4,6 +4,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use tokio::{io::{self, AsyncBufReadExt, BufReader}, sync::Mutex};
 use pluton_core::{cryptography::get_signing_key, networking::definitions};
 use tokio_tungstenite::tungstenite::handshake::server;
+use chrono::{Local, Utc, TimeZone};
 
 pub async fn handle_incoming(message: Message, client_state: Arc<Mutex<ClientState>>) {
     println!("Received: {:?}", message.to_text().unwrap());
@@ -19,7 +20,19 @@ pub async fn handle_incoming(message: Message, client_state: Arc<Mutex<ClientSta
 
             match msg {
                 definitions::TextNetworkMessage::ServerText(text_msg) => {
-                    println!("{} - {:?}: {}", text_msg.timestamp, text_msg.sender, text_msg.plaintext);
+                    let sender_username = match client_state.lock().await.peers.get(&text_msg.sender) {
+                        Some(peer) => {
+                            peer.username.clone()
+                        }
+                        None => String::from("Error")
+                    };
+
+                    let datetime = Utc.timestamp_opt(text_msg.timestamp, 0)
+                        .single()
+                        .expect("Invalid timestamp")
+                        .with_timezone(&Local);
+
+                    println!("{} - {}: {}", datetime, sender_username, text_msg.plaintext);
                 }
                 definitions::TextNetworkMessage::ServerStatus(server_status) => {
                     println!("Welcome!");
@@ -48,7 +61,12 @@ pub async fn handle_incoming(message: Message, client_state: Arc<Mutex<ClientSta
                             None => String::from("Error")
                         };
 
-                        println!("{} - {:?}: {}", text_msg.timestamp, sender_username, text_msg.plaintext);
+                        let datetime = Utc.timestamp_opt(text_msg.timestamp, 0)
+                            .single()
+                            .expect("Invalid timestamp")
+                            .with_timezone(&Local);
+
+                        println!("{} - {}: {}", datetime, sender_username, text_msg.plaintext);
                     }
                 }
                 _ => { } // Client messages are ignored
