@@ -3,11 +3,10 @@ use std::{sync::Arc};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use tokio::{io::{self, AsyncBufReadExt, BufReader}, sync::Mutex};
 use pluton_core::{cryptography::get_signing_key, networking::definitions};
-use tokio_tungstenite::tungstenite::handshake::server;
 use chrono::{Local, Utc, TimeZone};
 
 pub async fn handle_incoming(message: Message, client_state: Arc<Mutex<ClientState>>) {
-    println!("Received: {:?}", message.to_text().unwrap());
+    //println!("Received: {:?}", message.to_text().unwrap());
     match message {
         Message::Text(text) => {
             let msg: definitions::TextNetworkMessage = match serde_json::from_str(&text) {
@@ -50,7 +49,7 @@ pub async fn handle_incoming(message: Message, client_state: Arc<Mutex<ClientSta
                             );
                         }
 
-                        println!("{:?}", state_lock.peers);
+                        //println!("{:?}", state_lock.peers);
                     }
 
                     for text_msg in server_status.messages {

@@ -132,7 +132,7 @@ async fn read_stdin(tx: futures_channel::mpsc::UnboundedSender<Message>, client_
                 id: current_id
             }
         );
-        println!("Sending: {:?}", text_message);
+        //println!("Sending: {:?}", text_message);
         tx.unbounded_send(Message::Text(serde_json::to_string(&text_message).expect("couldnt convert").into())).unwrap();
     }
 }

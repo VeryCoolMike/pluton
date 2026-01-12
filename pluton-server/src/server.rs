@@ -86,8 +86,6 @@ async fn handle_connection(
 
     // At this point, the client has succesfully authenticated themselves
 
-    let conn = database.connect().unwrap();
-
     // Insert the write part of this peer to the peer map.
     let (tx, rx) = unbounded();
     
@@ -190,6 +188,13 @@ async fn handle_connection(
                             timestamp: since_epoch_seconds
                         });
 
+                        // Add message to database
+                        if let definitions::TextNetworkMessage::ServerText(msg) = &broadcast_message {
+                            if let Err(e) = database::add_message(msg, database.clone()).await {
+                                eprintln!("add_message failed: {e}");
+                            }
+                        }
+
 
                         let peers = peer_map.lock().await;
 
@@ -238,6 +243,9 @@ pub async fn start_server() -> anyhow::Result<()> {
         Builder::new_local("server_data.db").build().await?
     );
     let conn = db.connect()?;
+
+    conn.query("PRAGMA journal_mode = WAL;", params![]).await?;
+    conn.execute("PRAGMA synchronous = NORMAL;", params![]).await?;
 
     let mut rows = conn.query(
         "
