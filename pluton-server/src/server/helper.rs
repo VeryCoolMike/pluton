@@ -1,0 +1,46 @@
+use ed25519_dalek::VerifyingKey;
+use pluton_core::networking::definitions;
+use std::collections::HashMap;
+use tokio::sync::Mutex;
+use std::{sync::Arc, net::SocketAddr};
+use tokio_tungstenite::tungstenite::protocol::Message;
+use futures_channel::mpsc::UnboundedSender;
+
+pub type Tx = UnboundedSender<Message>;
+
+pub async fn retry<T, E, F, Fut>(mut f: F, retries: usize) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+{
+    let mut last_err = None;
+
+    for _ in 0..retries {
+        match f().await {
+            Ok(v) => return Ok(v),
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    Err(last_err.unwrap())
+}
+
+
+#[derive(Debug)]
+pub struct ServerInfo {
+    pub name: String,
+    pub message_channels: Vec<definitions::Channel>,
+    pub voice_channels: Vec<definitions::Channel>,
+    pub default_channel: definitions::Channel
+}
+
+#[derive(Debug)]
+pub struct PeerInfo {
+    pub username: String,
+    pub tx: Tx,
+    pub public_key: VerifyingKey,
+    pub address: String,
+    pub roles: Vec<u8>,
+    pub status: definitions::UserStatus
+}
+pub type PeerMap = Arc<Mutex<HashMap<SocketAddr, PeerInfo>>>;
