@@ -56,18 +56,49 @@ pub async fn create_server() -> anyhow::Result<()> {
 
     let db = Builder::new_local("server_data.db").build().await?;
     let conn = db.connect()?;
+
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS server (
-            server_name varchar(64) NOT NULL,
-            server_password varchar(255) NOT NULL,
-            server_port varchar(8) NOT NULL,
-            server_ip varchar(16) NOT NULL
+        "CREATE TABLE IF NOT EXISTS channels (
+            id INTEGER PRIMARY KEY,
+            name TEXT,
+            type TEXT NOT NULL
+                CHECK (type IN ('text', 'voice')) 
         );", ()
     ).await?;
 
     conn.execute(
-        "INSERT INTO server (server_name, server_password, server_port, server_ip)
-        VALUES (?, ?, ?, ?);
+        "INSERT INTO channels (name, type)
+        VALUES ('general', 'text');", ()
+    ).await?;
+
+    conn.execute(
+        "INSERT INTO channels (name, type)
+        VALUES ('general', 'voice');", ()
+    ).await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS server (
+            server_name TEXT NOT NULL,
+            server_password TEXT NOT NULL,
+            server_port TEXT NOT NULL,
+            server_ip TEXT NOT NULL,
+            default_channel INTEGER NOT NULL,
+            FOREIGN KEY(default_channel) REFERENCES channels(id)
+        );", ()
+    ).await?;
+
+    conn.execute(
+        "INSERT INTO server (
+            server_name,
+            server_password,
+            server_port,
+            server_ip,
+            default_channel
+        )
+        VALUES (
+            ?, ?, ?, ?,
+            (SELECT id FROM channels WHERE name = 'general' AND type = 'text' LIMIT 1)
+        );
         ", params![server_name, server_password, "6767", "127.0.0.1"]
     ).await?;
 
@@ -81,15 +112,17 @@ pub async fn create_server() -> anyhow::Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY,
-            sender BLOB,
-            plaintext TEXT,
-            timestamp INTEGER            
+            sender BLOB NOT NULL,
+            plaintext TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,  
+            channel_id INTEGER NOT NULL,
+            FOREIGN KEY (channel_id) REFERENCES channels(id)   
         );", ()
     ).await?;
 
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_messages_time_id
-        ON messages(timestamp DESC, id DESC);", ()
+        "CREATE INDEX IF NOT EXISTS idx_message_channel_time
+        ON messages(channel_id, timestamp DESC, id DESC);", ()
     ).await?;
 
     outro("Server has been made, please run --start_server")?;

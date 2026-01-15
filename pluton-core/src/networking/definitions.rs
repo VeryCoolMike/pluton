@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 use serde_with::{DisplayFromStr, TimestampSeconds, serde_as};
 use ed25519_dalek::{Signature, VerifyingKey};
+use std::ops::Range;
 
 pub const VERSION: u32 = 1;
 
@@ -81,7 +82,10 @@ pub enum TextNetworkMessage {
     ClientText(ClientTextMessage),
     ServerText(ServerTextMessage),
     UserStatusChange(UserStatusChange),
-    ServerStatus(ServerStatus)
+    ChangeUserStatus(ChangeUserStatus),
+    ServerStatus(ServerStatus),
+    ClientRequestMessages(ClientRequestMessages),
+    ServerRequestMessages(ServerRequestMessages)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -89,6 +93,7 @@ pub struct ClientTextMessage {
     pub plaintext: String,
     pub signed_message: Signature,
     pub id: u32,
+    pub channel: Channel
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -99,6 +104,17 @@ pub struct ServerTextMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct ClientRequestMessages {
+    pub range: Range<u64>,
+    pub channel: Channel
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ServerRequestMessages {
+    pub messages: Vec<ServerTextMessage>
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum UserStatus {
     Online,
     DoNotDisturb,
@@ -106,10 +122,16 @@ pub enum UserStatus {
     Offline
 }
 
+// Server -> Client
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UserStatusChange {
     pub public_key: VerifyingKey,
-    pub address: String,
+    pub status: UserStatus
+}
+
+// Client -> Server
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ChangeUserStatus {
     pub status: UserStatus
 }
 
@@ -117,15 +139,23 @@ pub struct UserStatusChange {
 pub struct UserOverview {
     pub public_key: VerifyingKey,
     pub address: String,
-    pub username: String
+    pub username: String,
+    pub roles: Vec<u8>,
+    pub status: UserStatus
 }
 
-// Ouch, that's could be a lot of data, maybe implement streaming later
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ServerStatus {
     pub name: String,
     pub users: Vec<UserOverview>,
-    pub message_channels: Vec<(String, u64)>, // (Name, ID)
-    pub voice_channels: Vec<(String, u64)>, // (Name, ID)
-    pub messages: Vec<ServerTextMessage>, // Last 32 messages
+    pub message_channels: Vec<Channel>,
+    pub default_channel: Channel,
+    pub voice_channels: Vec<Channel>,
+    pub messages: Vec<ServerTextMessage> // Last ??? messages,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Channel {
+    pub id: u64,
+    pub name: String
 }

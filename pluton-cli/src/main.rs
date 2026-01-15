@@ -4,12 +4,15 @@
 
 use std::env;
 use std::io;
+use std::string;
 
 use ed25519_dalek::VerifyingKey;
 use futures_util::{future, pin_mut, StreamExt, SinkExt};
 use pluton_core::cryptography::get_signing_key;
 use pluton_core::cryptography::sign_message;
+use pluton_core::networking::definitions::Channel;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_tungstenite::tungstenite::client;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use ed25519_dalek::SigningKey;
 use std::collections::HashMap;
@@ -24,13 +27,18 @@ mod cli_helper;
 #[derive(Clone, Debug)]
 struct Peer {
     username: String,
-    address: String
+    address: String,
+    roles: Vec<u8>,
+    status: definitions::UserStatus
 }
 
 struct ClientState {
     peers: HashMap<VerifyingKey, Peer>,
     current_message_id: u32,
-    signing_key: SigningKey
+    signing_key: SigningKey,
+    current_channel: definitions::Channel,
+    message_channels: Vec<definitions::Channel>,
+    voice_channels: Vec<definitions::Channel>
 }
 
 #[tokio::main]
@@ -45,7 +53,10 @@ async fn main() {
     let client_state = Arc::new(Mutex::new(ClientState {
         peers: HashMap::new(),
         current_message_id: 0,
-        signing_key: signing_key
+        signing_key: signing_key,
+        current_channel: definitions::Channel {id: 0, name: String::from("general") },
+        message_channels: vec![],
+        voice_channels: vec![]
     }));
 
     let url = env::args().nth(1).unwrap_or_else(|| String::from("ws://127.0.0.1:6767"));
@@ -118,21 +129,10 @@ async fn read_stdin(tx: futures_channel::mpsc::UnboundedSender<Message>, client_
         // Text Message Construction
 
         let string_message = String::from_utf8(buf.clone()).expect("stop yapping");
+        let trimmed_message = string_message.trim();
 
-        let mut client_lock = client_state.lock().await;
-        let signing_key = client_lock.signing_key.clone();
-        let current_id = client_lock.current_message_id;
-        client_lock.current_message_id += 1;
-        drop(client_lock);
+        // Check for commands
 
-        let text_message = definitions::TextNetworkMessage::ClientText(
-            definitions::ClientTextMessage {
-                plaintext: string_message.clone(),
-                signed_message: sign_message(&string_message, &signing_key).await,
-                id: current_id
-            }
-        );
-        //println!("Sending: {:?}", text_message);
-        tx.unbounded_send(Message::Text(serde_json::to_string(&text_message).expect("couldnt convert").into())).unwrap();
+        cli_helper::manage_commands(trimmed_message, client_state.clone(), tx.clone()).await;
     }
 }
