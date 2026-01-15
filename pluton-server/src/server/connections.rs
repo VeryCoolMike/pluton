@@ -69,10 +69,13 @@ pub async fn handle_connection(
         peers.iter().filter(|(peer_addr, _)| *peer_addr != &addr).map(|(_, peer)| peer.tx.clone()).collect()
     };
 
-    let join_alert = definitions::UserStatusChange {
-        public_key: public_key,
-        status: definitions::UserStatus::Online
-    };
+    let join_alert = definitions::TextNetworkMessage::UserStatusChange(
+        definitions::UserStatusChange {
+            public_key: public_key,
+            status: definitions::UserStatus::Online
+        }
+    );
+
     for tx in broadcast_recipients {
         tx.unbounded_send(Message::Text(serde_json::to_string(&join_alert).expect("unable to serde").into())).unwrap();
     }
@@ -81,20 +84,19 @@ pub async fn handle_connection(
 
     let mut users: Vec<UserOverview> = vec![];
 
-    { // Separate scope because I'm scared of mutexes
-        let peers = peer_map.lock().await;
-        for user in peers.iter() {
-            users.push(
-                definitions::UserOverview { 
-                    public_key: user.1.public_key.clone(),
-                    address: user.1.address.clone(),
-                    username: user.1.username.clone(),
-                    roles: user.1.roles.clone(),
-                    status: user.1.status.clone()
-                }
-            )
-        }
+    let peers = peer_map.lock().await;
+    for user in peers.iter() {
+        users.push(
+            definitions::UserOverview { 
+                public_key: user.1.public_key.clone(),
+                address: user.1.address.clone(),
+                username: user.1.username.clone(),
+                roles: user.1.roles.clone(),
+                status: user.1.status.clone()
+            }
+        )
     }
+    drop(peers);
 
     let last_messages = helper::retry(
         || database::get_messages(0..256, server_info.default_channel.clone(), database.clone()),
