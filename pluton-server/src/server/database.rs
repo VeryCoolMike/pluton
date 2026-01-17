@@ -1,7 +1,8 @@
 use ed25519_dalek::VerifyingKey;
-use pluton_core::networking::definitions::{self, ServerTextMessage};
+use pluton_core::{helper, networking::definitions::{self, ServerTextMessage}};
 use std::{ops::Range, sync::Arc};
 use libsql::{Database, params};
+use crate::server::helper::PeerInfo;
 
 pub async fn get_messages(range: Range<u64>, channel: definitions::Channel, database: Arc<Database>) -> anyhow::Result<Vec<ServerTextMessage>> {
     let conn = database.connect()?;
@@ -29,7 +30,8 @@ pub async fn get_messages(range: Range<u64>, channel: definitions::Channel, data
             ServerTextMessage { 
                 plaintext: row.get::<String>(0)?,
                 sender: VerifyingKey::from_bytes(&sender_array)?,
-                timestamp: row.get::<i64>(2)?
+                timestamp: row.get::<i64>(2)?,
+                channel_id: channel.id
             }
         );
     }
@@ -50,6 +52,10 @@ pub async fn add_message(message: &ServerTextMessage, channel: definitions::Chan
 
     Ok(())
 }
+
+pub async fn add_user(info: PeerInfo, database: Arc<Database>) -> anyhow::Result<()> {
+    Ok(())
+} 
 
 pub async fn get_default_channel(database: Arc<Database>) -> anyhow::Result<definitions::Channel> {
     let conn = database.connect()?;

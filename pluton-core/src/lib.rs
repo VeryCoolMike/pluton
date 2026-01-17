@@ -2,6 +2,7 @@ pub mod cryptography;
 pub mod account_management;
 pub mod helper;
 pub mod networking;
+pub mod client;
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right

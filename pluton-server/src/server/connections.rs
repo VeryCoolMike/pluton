@@ -4,11 +4,9 @@ use std::{
 
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{SinkExt, StreamExt, future::{self, join}, pin_mut, stream::TryStreamExt};
-use libsql::{Builder, params};
 
 use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions::{self, UserOverview}};
 use crate::server::{database, helper};
-use ed25519_dalek::VerifyingKey;
 
 use tokio::{net::{TcpListener, TcpStream}, sync::{broadcast, Mutex}};
 use tokio_tungstenite::tungstenite::{handshake::server, protocol::Message};
@@ -60,9 +58,12 @@ pub async fn handle_connection(
         status: definitions::UserStatus::Online
     };
     let public_key = info.public_key.clone();
+    let info_clone = info.clone();
 
     peer_map.lock().await.insert(addr, info);
     println!("{} has been accepted!", addr);
+
+    database::add_user(info_clone, database.clone()).await;
 
     let broadcast_recipients: Vec<helper::Tx> = {
         let peers = peer_map.lock().await; 
@@ -149,7 +150,8 @@ pub async fn handle_connection(
                         let broadcast_message = definitions::TextNetworkMessage::ServerText(definitions::ServerTextMessage {
                             plaintext: text_msg.plaintext.trim().to_string(),
                             sender: public_key,
-                            timestamp: since_epoch_seconds
+                            timestamp: since_epoch_seconds,
+                            channel_id: text_msg.channel.id
                         });
 
                         // Add message to database
