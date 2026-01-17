@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use serde_with::{DisplayFromStr, TimestampSeconds, serde_as};
-use ed25519_dalek::{Signature, VerifyingKey};
-use std::ops::Range;
+use ed25519_dalek::{Signature, VerifyingKey, SigningKey};
+use std::{ops::Range, collections::HashMap};
 
 pub const VERSION: u32 = 1;
 
@@ -75,6 +75,25 @@ pub enum HandshakeError {
     SerializationError
 }
 
+// Client Only
+#[derive(Clone, Debug)]
+pub struct Peer {
+    pub username: String,
+    pub address: String,
+    pub roles: Vec<u8>,
+    pub status: UserStatus
+}
+
+pub struct ClientState {
+    pub peers: HashMap<VerifyingKey, Peer>,
+    pub current_message_id: u32,
+    pub signing_key: SigningKey,
+    pub current_channel: Channel,
+    pub current_messages: Vec<ServerTextMessage>,
+    pub message_channels: Vec<Channel>,
+    pub voice_channels: Vec<Channel>
+}
+
 // Text Messages
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", content = "data")]
@@ -96,10 +115,11 @@ pub struct ClientTextMessage {
     pub channel: Channel
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServerTextMessage {
     pub plaintext: String,
     pub sender: VerifyingKey,
+    pub channel_id: u64,
     pub timestamp: i64 // Time from UNIX EPOCH
 }
 

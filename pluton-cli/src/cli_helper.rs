@@ -1,12 +1,12 @@
-use crate::{ClientState, Peer, Message};
-use std::{sync::Arc};
+use crate::Message;
+use std::{os::linux::raw::stat, sync::Arc};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use tokio::{io::{self, AsyncBufReadExt, BufReader}, sync::Mutex};
 use pluton_core::{cryptography::{get_signing_key, sign_message}, networking::definitions::{self, TextNetworkMessage}};
 use chrono::{Local, Utc, TimeZone};
-use tokio_tungstenite::tungstenite::handshake::server;
+use tokio_tungstenite::tungstenite::{client, http::status};
 
-pub async fn handle_incoming(message: Message, client_state: Arc<Mutex<ClientState>>) {
+pub async fn handle_incoming(message: Message, client_state: Arc<Mutex<definitions::ClientState>>) {
     //println!("Received: {:?}", message.to_text().unwrap());
     match message {
         Message::Text(text) => {
@@ -26,61 +26,47 @@ pub async fn handle_incoming(message: Message, client_state: Arc<Mutex<ClientSta
     }
 }
 
-pub async fn manage_request(msg: TextNetworkMessage, client_state: Arc<Mutex<ClientState>>) {
+pub async fn print_messages(client_state: Arc<Mutex<definitions::ClientState>>) {
+    let client_lock = client_state.lock().await;
+    let messages = client_lock.current_messages.clone();
+    let peers = client_lock.peers.clone();
+    drop(client_lock);
+    
+    for text_msg in messages {
+        let sender_username = match peers.get(&text_msg.sender) {
+            Some(peer) => {
+                peer.username.clone()
+            }
+            None => String::from("Error")
+        };
+
+        let datetime = Utc.timestamp_opt(text_msg.timestamp, 0)
+            .single()
+            .expect("Invalid timestamp")
+            .with_timezone(&Local);
+
+        println!("{} - {}: {}", datetime, sender_username, text_msg.plaintext);
+    }
+}
+
+pub async fn manage_request(msg: TextNetworkMessage, client_state: Arc<Mutex<definitions::ClientState>>) {
     match msg {
         definitions::TextNetworkMessage::ServerText(text_msg) => {
-            let sender_username = match client_state.lock().await.peers.get(&text_msg.sender) {
-                Some(peer) => {
-                    peer.username.clone()
-                }
-                None => String::from("Error")
+            match pluton_core::client::incoming::receive_server_text(text_msg.clone(), client_state).await {
+                Ok((datetime, sender_username)) => {
+                    println!("{} - {}: {}", datetime, sender_username, text_msg.plaintext);
+                },
+                Err(e) => { eprintln!("{}", e); }
             };
-
-            let datetime = Utc.timestamp_opt(text_msg.timestamp, 0)
-                .single()
-                .expect("Invalid timestamp")
-                .with_timezone(&Local);
-
-            println!("{} - {}: {}", datetime, sender_username, text_msg.plaintext);
         }
         definitions::TextNetworkMessage::ServerStatus(server_status) => {
             println!("Welcome!");
-
-            {
-                let mut client_lock = client_state.lock().await;
-                // Let's get some peers
-                for user in server_status.users {
-                    client_lock.peers.insert(
-                        user.public_key,
-                        Peer {
-                            username: user.username,
-                            address: user.address,
-                            roles: user.roles,
-                            status: user.status
-                        }
-                    );
-                }
-
-                client_lock.current_channel = server_status.default_channel;
-                client_lock.message_channels = server_status.message_channels;
-                client_lock.voice_channels = server_status.voice_channels;
+            print!("\x1B[2J\x1B[1;1H"); // Clear terminal
+            if let Err(e) = pluton_core::client::incoming::receive_server_status(server_status, client_state.clone()).await {
+                eprintln!("{}", e);
             }
-
-            for text_msg in server_status.messages {
-                let sender_username = match client_state.lock().await.peers.get(&text_msg.sender) {
-                    Some(peer) => {
-                        peer.username.clone()
-                    }
-                    None => String::from("Error")
-                };
-
-                let datetime = Utc.timestamp_opt(text_msg.timestamp, 0)
-                    .single()
-                    .expect("Invalid timestamp")
-                    .with_timezone(&Local);
-
-                println!("{} - {}: {}", datetime, sender_username, text_msg.plaintext);
-            }
+            print_messages(client_state).await;
+            
         }
         definitions::TextNetworkMessage::ServerRequestMessages(response) => {
             for text_msg in response.messages {
@@ -99,13 +85,22 @@ pub async fn manage_request(msg: TextNetworkMessage, client_state: Arc<Mutex<Cli
                 println!("{} - {}: {}", datetime, sender_username, text_msg.plaintext);
             }
         }
+        definitions::TextNetworkMessage::UserStatusChange(status_change) => {
+            let mut client_lock = client_state.lock().await;
+
+            if let Some(peer) = client_lock.peers.get_mut(&status_change.public_key) {
+                peer.status = status_change.status;
+            }
+
+            drop(client_lock);
+        }
         _ => { } // Client messages are ignored
     }
 }
 
 pub async fn manage_commands(
     trimmed_message: &str,
-    client_state: Arc<Mutex<ClientState>>,
+    client_state: Arc<Mutex<definitions::ClientState>>,
     tx: futures_channel::mpsc::UnboundedSender<Message>
 ) {
     match trimmed_message {
@@ -149,7 +144,6 @@ pub async fn manage_commands(
 
                 for channel in message_channels {
                     if args[1].to_string() == channel.name {
-                        println!("Found channel");
                         let mut client_lock = client_state.lock().await;
                         client_lock.current_channel = channel.clone();
                         drop(client_lock);
@@ -157,13 +151,13 @@ pub async fn manage_commands(
                         let message_request = definitions::TextNetworkMessage::ClientRequestMessages(
                             definitions::ClientRequestMessages { 
                                 range: 0..255,
-                                channel: channel
+                                channel: channel.clone()
                             }
                         );
 
                         tx.unbounded_send(Message::Text(serde_json::to_string(&message_request).expect("couldnt convert").into())).unwrap();
-
-                        println!("changed channel");
+                        print!("\x1B[2J\x1B[1;1H"); // Clear terminal when changing channels
+                        println!("You are now in: #{}", channel.name);
                     }
                 }
 

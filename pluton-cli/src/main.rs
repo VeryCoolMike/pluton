@@ -1,20 +1,12 @@
-// The is a very simple server for debugging and development purposes.
+// The is a very simple client for debugging and development purposes.
 // It is probably unsafe, crashes when fed incorrect data, poorly written, and might not reflect the pluton protocol.
 // Do not use this.
 
 use std::env;
-use std::io;
-use std::string;
 
-use ed25519_dalek::VerifyingKey;
 use futures_util::{future, pin_mut, StreamExt, SinkExt};
-use pluton_core::cryptography::get_signing_key;
-use pluton_core::cryptography::sign_message;
-use pluton_core::networking::definitions::Channel;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_tungstenite::tungstenite::client;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use ed25519_dalek::SigningKey;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -23,23 +15,6 @@ use pluton_core::networking::definitions;
 use pluton_core::helper;
 
 mod cli_helper;
-
-#[derive(Clone, Debug)]
-struct Peer {
-    username: String,
-    address: String,
-    roles: Vec<u8>,
-    status: definitions::UserStatus
-}
-
-struct ClientState {
-    peers: HashMap<VerifyingKey, Peer>,
-    current_message_id: u32,
-    signing_key: SigningKey,
-    current_channel: definitions::Channel,
-    message_channels: Vec<definitions::Channel>,
-    voice_channels: Vec<definitions::Channel>
-}
 
 #[tokio::main]
 async fn main() {
@@ -50,11 +25,12 @@ async fn main() {
         None => return,
     };
        
-    let client_state = Arc::new(Mutex::new(ClientState {
+    let client_state = Arc::new(Mutex::new(definitions::ClientState {
         peers: HashMap::new(),
         current_message_id: 0,
         signing_key: signing_key,
         current_channel: definitions::Channel {id: 0, name: String::from("general") },
+        current_messages: vec![],
         message_channels: vec![],
         voice_channels: vec![]
     }));
@@ -116,7 +92,10 @@ async fn main() {
 
 // Our helper method which will read data from stdin and send it along the
 // sender provided.
-async fn read_stdin(tx: futures_channel::mpsc::UnboundedSender<Message>, client_state: Arc<Mutex<ClientState>>) {
+async fn read_stdin(
+    tx: futures_channel::mpsc::UnboundedSender<Message>,
+    client_state: Arc<Mutex<definitions::ClientState>>
+) {
     let mut stdin = tokio::io::stdin();
     loop {
         let mut buf = vec![0; 1024];

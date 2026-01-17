@@ -104,9 +104,47 @@ pub async fn create_server() -> anyhow::Result<()> {
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS users (
-            public_key TEXT PRIMARY KEY,
-            permission INTEGER
+            id INTEGER PRIMARY KEY
+            public_key BLOB NOT NULL,
         );", ()
+    ).await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS roles (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            can_kick INTEGER NOT NULL
+        );", ()
+    ).await?;
+
+    conn.execute(
+        "INSERT INTO roles (
+            name,
+            can_kick
+        )
+        VALUES (
+            (?, ?)
+        );", params!["admin", 1]
+    ).await?;
+
+    conn.execute(
+        "INSERT INTO roles (
+            name,
+            can_kick
+        )
+        VALUES (
+            (?, ?)
+        );", params!["general", 0]
+    ).await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS user_roles {
+            user_id INTEGER NOT NULL,
+            role_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, role_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            FOREIGN KEY (role_id) REFERENCES roles(id) on DELETE CASCADE
+        };", ()
     ).await?;
 
     conn.execute(

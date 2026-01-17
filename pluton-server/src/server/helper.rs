@@ -34,7 +34,7 @@ pub struct ServerInfo {
     pub default_channel: definitions::Channel
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PeerInfo {
     pub username: String,
     pub tx: Tx,
