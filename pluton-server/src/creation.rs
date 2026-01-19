@@ -57,6 +57,7 @@ pub async fn create_server() -> anyhow::Result<()> {
     let db = Builder::new_local("server_data.db").build().await?;
     let conn = db.connect()?;
 
+    // Channels
     conn.execute(
         "CREATE TABLE IF NOT EXISTS channels (
             id INTEGER PRIMARY KEY,
@@ -76,39 +77,7 @@ pub async fn create_server() -> anyhow::Result<()> {
         VALUES ('general', 'voice');", ()
     ).await?;
 
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS server (
-            server_name TEXT NOT NULL,
-            server_password TEXT NOT NULL,
-            server_port TEXT NOT NULL,
-            server_ip TEXT NOT NULL,
-            default_channel INTEGER NOT NULL,
-            FOREIGN KEY(default_channel) REFERENCES channels(id)
-        );", ()
-    ).await?;
-
-    conn.execute(
-        "INSERT INTO server (
-            server_name,
-            server_password,
-            server_port,
-            server_ip,
-            default_channel
-        )
-        VALUES (
-            ?, ?, ?, ?,
-            (SELECT id FROM channels WHERE name = 'general' AND type = 'text' LIMIT 1)
-        );
-        ", params![server_name, server_password, "6767", "127.0.0.1"]
-    ).await?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY
-            public_key BLOB NOT NULL,
-        );", ()
-    ).await?;
-
+    // Roles
     conn.execute(
         "CREATE TABLE IF NOT EXISTS roles (
             id INTEGER PRIMARY KEY,
@@ -123,8 +92,8 @@ pub async fn create_server() -> anyhow::Result<()> {
             can_kick
         )
         VALUES (
-            (?, ?)
-        );", params!["admin", 1]
+            ?, ?
+        );", params!["general", 0]
     ).await?;
 
     conn.execute(
@@ -133,20 +102,61 @@ pub async fn create_server() -> anyhow::Result<()> {
             can_kick
         )
         VALUES (
-            (?, ?)
-        );", params!["general", 0]
+            ?, ?
+        );", params!["admin", 1]
+    ).await?;
+
+    // Server
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS server (
+            server_name TEXT NOT NULL,
+            server_password TEXT NOT NULL,
+            server_port TEXT NOT NULL,
+            server_ip TEXT NOT NULL,
+            default_channel INTEGER NOT NULL,
+            default_role INTEGER NOT NULL,
+            FOREIGN KEY(default_channel) REFERENCES channels(id),
+            FOREIGN KEY(default_role) REFERENCES roles(id)
+        );", ()
     ).await?;
 
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS user_roles {
+        "INSERT INTO server (
+            server_name,
+            server_password,
+            server_port,
+            server_ip,
+            default_channel,
+            default_role
+        )
+        VALUES (
+            ?, ?, ?, ?,
+            (SELECT id FROM channels WHERE name = 'general' AND type = 'text' LIMIT 1),
+            (SELECT id FROM roles WHERE name = 'general' LIMIT 1)
+        );
+        ", params![server_name, server_password, "6767", "127.0.0.1"]
+    ).await?;
+
+    // Users
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            public_key BLOB NOT NULL
+        );", ()
+    ).await?;
+
+    // User roles
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS user_roles (
             user_id INTEGER NOT NULL,
             role_id INTEGER NOT NULL,
             PRIMARY KEY (user_id, role_id),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             FOREIGN KEY (role_id) REFERENCES roles(id) on DELETE CASCADE
-        };", ()
+        );", ()
     ).await?;
 
+    // Messages
     conn.execute(
         "CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY,

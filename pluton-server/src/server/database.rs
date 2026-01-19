@@ -12,8 +12,11 @@ pub async fn get_messages(range: Range<u64>, channel: definitions::Channel, data
         FROM messages
         WHERE channel_id = ?
         ORDER BY timestamp DESC, id DESC
-        LIMIT ? OFFSET ?;",
-        params![channel.id, range.end - range.start, range.start]
+        LIMIT ? OFFSET ?;", params![
+            channel.id,
+            range.end - range.start,
+            range.start
+        ]
     ).await?;
 
     let mut messages: Vec<ServerTextMessage> = vec![];
@@ -46,16 +49,84 @@ pub async fn add_message(message: &ServerTextMessage, channel: definitions::Chan
 
     conn.execute("
         INSERT INTO messages (channel_id, sender, plaintext, timestamp)
-        VALUES (?, ?, ?, ?);
-        ", params![channel.id, message.sender.as_bytes(), message.plaintext.clone(), message.timestamp]
+        VALUES (?, ?, ?, ?);", params![
+            channel.id,
+            message.sender.as_bytes(),
+            message.plaintext.clone(),
+            message.timestamp
+        ]
     ).await?;
 
     Ok(())
 }
 
 pub async fn add_user(info: PeerInfo, database: Arc<Database>) -> anyhow::Result<()> {
+    let conn = database.connect()?;
+
+    conn.execute("
+        INSERT INTO users (public_key)
+        VALUES (?);", params![info.public_key.as_bytes()]
+    ).await?;
+
+    let default_role = match get_default_role(database.clone()).await {
+        Ok(m) => m,
+        Err(e) => { return Err(anyhow::anyhow!(e)) }
+    };
+
+    let user_id = match user_exists(info, database.clone()).await {
+        Ok(m) => {
+            match m {
+                Some(v) => v,
+                None => { return Err(anyhow::anyhow!("User somehow does not exist after successful creation")) }
+            }
+        },
+        Err(e) => { return Err(anyhow::anyhow!(e)) }
+    };
+
+    conn.execute("
+        INSERT INTO user_roles (user_id, role_id)
+        VALUES (?, ?);", params![user_id, default_role]
+    ).await?;
+
     Ok(())
 } 
+
+pub async fn user_exists(info: PeerInfo, database: Arc<Database>) -> anyhow::Result<Option<bool>> {
+    let conn = database.connect()?;
+
+    let mut query_user = conn.query("
+        SELECT id
+        FROM users
+        WHERE public_key = (?)
+        LIMIT 1;", params![info.public_key.as_bytes()]
+    ).await?;
+
+    if let Some(user) = query_user.next().await? {
+        return Ok(
+            Some(user.get(0)?)
+        );
+    } else {
+        return Ok(None);
+    }
+}
+
+pub async fn get_default_role(database: Arc<Database>) -> anyhow::Result<u64> {
+    let conn = database.connect()?;
+
+    let mut query_default_role = conn.query("
+        SELECT id
+        FROM roles
+        WHERE id = (SELECT default_role FROM server LIMIT 1);", ()
+    ).await?;
+
+    if let Some(default_role) = query_default_role.next().await? {
+        let id: u64 = default_role.get(0)?;
+        
+        return Ok(id);
+    }
+
+    Err(anyhow::anyhow!("default channel not found"))
+}
 
 pub async fn get_default_channel(database: Arc<Database>) -> anyhow::Result<definitions::Channel> {
     let conn = database.connect()?;
