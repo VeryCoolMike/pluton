@@ -57,13 +57,23 @@ pub async fn handle_connection(
         roles: vec![],
         status: definitions::UserStatus::Online
     };
-    let public_key = info.public_key.clone();
+    let public_key = info.public_key;
     let info_clone = info.clone();
+
+    let user_exists = match database::user_exists(info_clone.clone(), database.clone()).await {
+        Ok(m) => {
+            m.is_some()
+        },
+        Err(_) => return
+    };
+
+    if !user_exists && let Err(e) = database::add_user(info_clone, database.clone()).await {
+        eprintln!("{e}");
+        return
+    };
 
     peer_map.lock().await.insert(addr, info);
     println!("{} has been accepted!", addr);
-
-    database::add_user(info_clone, database.clone()).await;
 
     let broadcast_recipients: Vec<helper::Tx> = {
         let peers = peer_map.lock().await; 
@@ -170,7 +180,7 @@ pub async fn handle_connection(
                             peers.iter().filter(|(peer_addr, _)| self_ping || *peer_addr != &addr).map(|(_, ws_sink)| ws_sink);
 
                         for recp in broadcast_recipients {
-                            println!("Sending to {:?}", addr);
+                            println!("Sending to {addr}");
                             recp.tx.unbounded_send(Message::Text(serde_json::to_string(&broadcast_message).expect("unable to serde").into())).unwrap();
                         }
                     }
