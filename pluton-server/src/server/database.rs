@@ -60,7 +60,7 @@ pub async fn add_message(message: &ServerTextMessage, channel: definitions::Chan
     Ok(())
 }
 
-pub async fn add_user(info: PeerInfo, database: Arc<Database>) -> anyhow::Result<()> {
+pub async fn add_user(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<()> {
     let conn = database.connect()?;
 
     conn.execute("
@@ -91,7 +91,7 @@ pub async fn add_user(info: PeerInfo, database: Arc<Database>) -> anyhow::Result
     Ok(())
 } 
 
-pub async fn user_exists(info: PeerInfo, database: Arc<Database>) -> anyhow::Result<Option<bool>> {
+pub async fn user_exists(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<Option<bool>> {
     let conn = database.connect()?;
 
     let mut query_user = conn.query("
@@ -102,12 +102,47 @@ pub async fn user_exists(info: PeerInfo, database: Arc<Database>) -> anyhow::Res
     ).await?;
 
     if let Some(user) = query_user.next().await? {
-        return Ok(
+        Ok(
             Some(user.get(0)?)
-        );
+        )
     } else {
-        return Ok(None);
+        Ok(None)
     }
+}
+
+pub async fn check_role_permission(info: &PeerInfo, database: Arc<Database>, permision: definitions::RolePermissions) -> anyhow::Result<bool> {
+    let conn = database.connect()?;
+
+    let user_id = match user_exists(info, database.clone()).await {
+        Ok(m) => {
+            match m {
+                Some(v) => v,
+                None => { return Err(anyhow::anyhow!("User does not exist")) }
+            }
+        },
+        Err(e) => { return Err(anyhow::anyhow!(e)) }
+    };
+
+    let mut query_user_roles = conn.query("
+        SELECT user_roles.user_id, roles.can_kick
+        FROM user_roles
+        INNER JOIN roles ON user_roles.role_id=roles.id
+        WHERE user_roles.user_id = (?);", params![user_id]
+    ).await?;
+
+    while let Some(row) = query_user_roles.next().await? {
+        let can_kick = row.get::<i64>(1)?;
+
+        match permision {
+            definitions::RolePermissions::Kick => {
+                if can_kick == 1 {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 pub async fn get_default_role(database: Arc<Database>) -> anyhow::Result<u64> {
