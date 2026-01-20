@@ -60,14 +60,14 @@ pub async fn handle_connection(
     let public_key = info.public_key;
     let info_clone = info.clone();
 
-    let user_exists = match database::user_exists(info_clone.clone(), database.clone()).await {
+    let user_exists = match database::user_exists(&info_clone, database.clone()).await {
         Ok(m) => {
             m.is_some()
         },
         Err(_) => return
     };
 
-    if !user_exists && let Err(e) = database::add_user(info_clone, database.clone()).await {
+    if !user_exists && let Err(e) = database::add_user(&info_clone, database.clone()).await {
         eprintln!("{e}");
         return
     };
@@ -82,7 +82,7 @@ pub async fn handle_connection(
 
     let join_alert = definitions::TextNetworkMessage::UserStatusChange(
         definitions::UserStatusChange {
-            public_key: public_key,
+            public_key,
             status: definitions::UserStatus::Online
         }
     );
@@ -99,7 +99,7 @@ pub async fn handle_connection(
     for user in peers.iter() {
         users.push(
             definitions::UserOverview { 
-                public_key: user.1.public_key.clone(),
+                public_key: user.1.public_key,
                 address: user.1.address.clone(),
                 username: user.1.username.clone(),
                 roles: user.1.roles.clone(),
@@ -116,7 +116,7 @@ pub async fn handle_connection(
 
     let server_status_message = definitions::TextNetworkMessage::ServerStatus(definitions::ServerStatus {
         name: server_info.name.clone(),
-        users: users,
+        users,
         message_channels: server_info.message_channels.clone(),
         default_channel: server_info.default_channel.clone(),
         voice_channels: server_info.voice_channels.clone(),
@@ -165,10 +165,10 @@ pub async fn handle_connection(
                         });
 
                         // Add message to database
-                        if let definitions::TextNetworkMessage::ServerText(msg) = &broadcast_message {
-                            if let Err(e) = database::add_message(msg, text_msg.channel, database.clone()).await {
-                                eprintln!("add_message failed: {e}");
-                            }
+                        if let definitions::TextNetworkMessage::ServerText(msg) = &broadcast_message 
+                            && let Err(e) = database::add_message(msg, text_msg.channel, database.clone()).await
+                        {
+                            eprintln!("add_message failed: {e}");
                         }
 
 
@@ -206,6 +206,9 @@ pub async fn handle_connection(
                         );
 
                         tx.unbounded_send(Message::Text(serde_json::to_string(&response).expect("unable to serde").into())).unwrap();
+                    }
+                    definitions::TextNetworkMessage::ClientKickRequest(request) => {
+
                     }
                     _ => { } // Server messages are ignored
                 }
