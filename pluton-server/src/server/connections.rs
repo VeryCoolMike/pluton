@@ -6,7 +6,7 @@ use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{SinkExt, StreamExt, future::{self, join}, pin_mut, stream::TryStreamExt};
 
 use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions::{self, UserOverview}};
-use crate::server::{database, helper};
+use crate::server::{database, helper, moderation};
 
 use tokio::{net::{TcpListener, TcpStream}, sync::{broadcast, Mutex}};
 use tokio_tungstenite::tungstenite::{handshake::server, protocol::Message};
@@ -208,7 +208,27 @@ pub async fn handle_connection(
                         tx.unbounded_send(Message::Text(serde_json::to_string(&response).expect("unable to serde").into())).unwrap();
                     }
                     definitions::TextNetworkMessage::ClientKickRequest(request) => {
+                        // We need to check that the user has the permissions
+                        
+                        let mut peers = peer_map.lock().await;
+                        
+                        let self_peer = peers.get_mut(&addr);
 
+                        if let Some(peer) = self_peer {
+                            let permission = database::check_role_permission(peer, database.clone(), definitions::RolePermissions::Kick).await;
+
+                            let safe_permission = match permission {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    eprintln!("Error when checking role permissions: {e}");
+                                    panic!("i should NOT be doing this")
+                                }
+                            };
+
+                            if safe_permission {
+                                moderation::kick_user(request, peer_map.clone(), database.clone()).await; 
+                            }
+                        }
                     }
                     _ => { } // Server messages are ignored
                 }

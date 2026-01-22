@@ -130,57 +130,90 @@ pub async fn manage_commands(
             println!("]------------[")
         }
         _ => {
-            if trimmed_message.starts_with("/swap") {
-                let args: Vec<&str> = trimmed_message.split(' ').collect();
+            match trimmed_message.split_whitespace().next() {
+                Some("/swap") => {
+                    let args: Vec<&str> = trimmed_message.split_whitespace().collect();
 
-                let client_lock = client_state.lock().await;
-                let message_channels = client_lock.message_channels.clone();
-                drop(client_lock);
+                    let client_lock = client_state.lock().await;
+                    let message_channels = client_lock.message_channels.clone();
+                    drop(client_lock);
 
-                if args.len() != 2 {
-                    println!("Invalid command");
-                    return
-                }
+                    if args.len() != 2 {
+                        println!("Invalid command");
+                        return
+                    }
 
-                for channel in message_channels {
-                    if args[1].to_string() == channel.name {
-                        let mut client_lock = client_state.lock().await;
-                        client_lock.current_channel = channel.clone();
-                        drop(client_lock);
+                    for channel in message_channels {
+                        if args[1].to_string() == channel.name {
+                            let mut client_lock = client_state.lock().await;
+                            client_lock.current_channel = channel.clone();
+                            drop(client_lock);
 
-                        let message_request = definitions::TextNetworkMessage::ClientRequestMessages(
-                            definitions::ClientRequestMessages { 
-                                range: 0..255,
-                                channel: channel.clone()
-                            }
-                        );
+                            let message_request = definitions::TextNetworkMessage::ClientRequestMessages(
+                                definitions::ClientRequestMessages { 
+                                    range: 0..255,
+                                    channel: channel.clone()
+                                }
+                            );
 
-                        tx.unbounded_send(Message::Text(serde_json::to_string(&message_request).expect("couldnt convert").into())).unwrap();
-                        print!("\x1B[2J\x1B[1;1H"); // Clear terminal when changing channels
-                        println!("You are now in: #{}", channel.name);
+                            tx.unbounded_send(Message::Text(serde_json::to_string(&message_request).expect("couldnt convert").into())).unwrap();
+                            print!("\x1B[2J\x1B[1;1H"); // Clear terminal when changing channels
+                            println!("You are now in: #{}", channel.name);
+                        }
                     }
                 }
+                Some("/kick") => {
+                    let args: Vec<&str> = trimmed_message.split_whitespace().collect();
+                    
+                    if args.len() < 3 {
+                        println!("Incorrect amount of arguements (/kick user reason)");
+                        return
+                    }
 
-                return
-            }
-            let mut client_lock = client_state.lock().await;
-            let signing_key = client_lock.signing_key.clone();
-            let current_id = client_lock.current_message_id;
-            let current_channel = client_lock.current_channel.clone();
-            client_lock.current_message_id += 1;
-            drop(client_lock);
+                    let client_lock = client_state.lock().await;
+                    let peers = client_lock.peers.clone();
+                    drop(client_lock);
 
-            let text_message = definitions::TextNetworkMessage::ClientText(
-                definitions::ClientTextMessage {
-                    plaintext: trimmed_message.to_string(),
-                    signed_message: sign_message(&trimmed_message, &signing_key).await,
-                    id: current_id,
-                    channel: current_channel
+                    let Some(recipient) = peers
+                        .iter()
+                        .find(|(_, v)| v.username == args[1])
+                        .map(|(k, _)| k)
+                    else {
+                        println!("User not found");
+                        return
+                    };
+
+                    let reason = args[2..].join(" ");
+
+                    let kick_request = definitions::TextNetworkMessage::ClientKickRequest(
+                        definitions::ClientKickRequest {
+                            recipient: *recipient,
+                            reason
+                        }
+                    );
+
+                    tx.unbounded_send(Message::Text(serde_json::to_string(&kick_request).expect("couldnt convert").into())).unwrap();
                 }
-            );
-            //println!("sending: {:?}", text_message);
-            tx.unbounded_send(Message::Text(serde_json::to_string(&text_message).expect("couldnt convert").into())).unwrap();
+                _ => {
+                    let mut client_lock = client_state.lock().await;
+                    let signing_key = client_lock.signing_key.clone();
+                    let current_id = client_lock.current_message_id;
+                    let current_channel = client_lock.current_channel.clone();
+                    client_lock.current_message_id += 1;
+                    drop(client_lock);
 
+                    let text_message = definitions::TextNetworkMessage::ClientText(
+                        definitions::ClientTextMessage {
+                            plaintext: trimmed_message.to_string(),
+                            signed_message: sign_message(&trimmed_message, &signing_key).await,
+                            id: current_id,
+                            channel: current_channel
+                        }
+                    );
+                    //println!("sending: {:?}", text_message);
+                    tx.unbounded_send(Message::Text(serde_json::to_string(&text_message).expect("couldnt convert").into())).unwrap();
+                }
+            }
         }
     }
 }

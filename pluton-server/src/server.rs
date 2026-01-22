@@ -8,6 +8,7 @@ use pluton_core::{cryptography::{sign_message, verify_signature}, networking::de
 mod database;
 mod helper;
 mod connections;
+mod moderation;
 
 use tokio::{net::{TcpListener, TcpStream}, sync::{broadcast, Mutex}};
 

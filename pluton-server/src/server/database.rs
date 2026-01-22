@@ -91,6 +91,18 @@ pub async fn add_user(info: &PeerInfo, database: Arc<Database>) -> anyhow::Resul
     Ok(())
 } 
 
+pub async fn remove_user(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<()> {
+    let conn = database.connect()?;
+
+    conn.execute("
+        DELETE
+        FROM users
+        WHERE public_key = (?);", params![info.public_key.as_bytes()]
+    ).await?;
+
+    Ok(())
+}
+
 pub async fn user_exists(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<Option<bool>> {
     let conn = database.connect()?;
 
