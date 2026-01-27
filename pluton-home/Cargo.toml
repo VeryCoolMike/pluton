@@ -4,3 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.100"
+axum = "0.8.8"
+ed25519-dalek = "2.2.0"
+libsql = "0.9.29"
+serde = "1.0.228"
+serde_json = "1.0.149"
+tokio = "1.49.0"
+pluton-core = { path = "../pluton-core/" }

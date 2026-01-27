@@ -26,5 +26,6 @@ tokio-tungstenite = "0.28.0"
 futures-util = { version = "0.3.31", features = ["sink"] }
 chrono = "0.4.43"
 anyhow = "1.0.100"
+libsql = "0.9.29"
 
 # Networking

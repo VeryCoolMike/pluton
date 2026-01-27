@@ -61,14 +61,17 @@ pub async fn handle_connection(
     let info_clone = info.clone();
 
     let user_exists = match database::user_exists(&info_clone, database.clone()).await {
-        Ok(m) => {
-            m.is_some()
+        Ok(_) => {
+            true
         },
-        Err(_) => return
+        Err(e) => {
+            eprintln!("New user: {e}");
+            false
+        }
     };
 
     if !user_exists && let Err(e) = database::add_user(&info_clone, database.clone()).await {
-        eprintln!("{e}");
+        eprintln!("User could not be added: {e}");
         return
     };
 
@@ -80,12 +83,11 @@ pub async fn handle_connection(
         peers.iter().filter(|(peer_addr, _)| *peer_addr != &addr).map(|(_, peer)| peer.tx.clone()).collect()
     };
 
-    let join_alert = definitions::TextNetworkMessage::UserStatusChange(
-        definitions::UserStatusChange {
-            public_key,
-            status: definitions::UserStatus::Online
-        }
-    );
+    let join_alert = definitions::TextNetworkMessage::UserJoin(definitions::UserJoin {
+        public_key,
+        username: info_clone.username,
+        address: info_clone.address
+    });
 
     for tx in broadcast_recipients {
         tx.unbounded_send(Message::Text(serde_json::to_string(&join_alert).expect("unable to serde").into())).unwrap();

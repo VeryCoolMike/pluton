@@ -38,6 +38,7 @@ pub enum TextNetworkMessage {
     ServerStatus(ServerStatus),
     ClientRequestMessages(ClientRequestMessages),
     ServerRequestMessages(ServerRequestMessages),
+    UserJoin(UserJoin),
 
     // Moderation
     ClientKickRequest(ClientKickRequest),
@@ -77,6 +78,14 @@ pub enum UserStatus {
     DoNotDisturb,
     Sleep,
     Offline
+}
+
+// Server -> Client
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UserJoin {
+    pub public_key: VerifyingKey,
+    pub username: String,
+    pub address: String
 }
 
 // Server -> Client

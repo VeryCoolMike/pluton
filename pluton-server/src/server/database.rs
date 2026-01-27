@@ -63,24 +63,18 @@ pub async fn add_message(message: &ServerTextMessage, channel: definitions::Chan
 pub async fn add_user(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<()> {
     let conn = database.connect()?;
 
+    let default_role = get_default_role(database.clone()).await?;
+
     conn.execute("
         INSERT INTO users (public_key)
         VALUES (?);", params![info.public_key.as_bytes()]
     ).await?;
 
-    let default_role = match get_default_role(database.clone()).await {
-        Ok(m) => m,
-        Err(e) => { return Err(anyhow::anyhow!(e)) }
-    };
-
     let user_id = match user_exists(info, database.clone()).await {
         Ok(m) => {
-            match m {
-                Some(v) => v,
-                None => { return Err(anyhow::anyhow!("User somehow does not exist after successful creation")) }
-            }
+            m.1
         },
-        Err(e) => { return Err(anyhow::anyhow!(e)) }
+        Err(e) => { return Err(anyhow::anyhow!(format!("Error when finding user ID: {e}"))) }
     };
 
     conn.execute("
@@ -89,21 +83,36 @@ pub async fn add_user(info: &PeerInfo, database: Arc<Database>) -> anyhow::Resul
     ).await?;
 
     Ok(())
-} 
+}
 
-pub async fn remove_user(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<()> {
+pub async fn remove_user(public_key: &VerifyingKey, database: Arc<Database>) -> anyhow::Result<()> {
     let conn = database.connect()?;
 
     conn.execute("
         DELETE
         FROM users
-        WHERE public_key = (?);", params![info.public_key.as_bytes()]
+        WHERE public_key = (?);", params![public_key.as_bytes()]
     ).await?;
 
     Ok(())
 }
 
-pub async fn user_exists(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<Option<bool>> {
+pub async fn get_users(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<Vec<definitions::UserOverview>> {
+    let users: Vec<definitions::UserOverview> = vec![];
+
+    let conn = database.connect()?;
+
+    let mut query_user = conn.query("
+        SELECT id
+        FROM users
+        WHERE public_key = (?)
+        LIMIT 1;", params![info.public_key.as_bytes()]
+    ).await?;
+
+    Ok(users)
+}
+
+pub async fn user_exists(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<(bool, i64)> {
     let conn = database.connect()?;
 
     let mut query_user = conn.query("
@@ -114,11 +123,9 @@ pub async fn user_exists(info: &PeerInfo, database: Arc<Database>) -> anyhow::Re
     ).await?;
 
     if let Some(user) = query_user.next().await? {
-        Ok(
-            Some(user.get(0)?)
-        )
+        Ok((true, user.get(0)?))
     } else {
-        Ok(None)
+        Err(anyhow::anyhow!("Error when finding user"))
     }
 }
 
@@ -127,10 +134,7 @@ pub async fn check_role_permission(info: &PeerInfo, database: Arc<Database>, per
 
     let user_id = match user_exists(info, database.clone()).await {
         Ok(m) => {
-            match m {
-                Some(v) => v,
-                None => { return Err(anyhow::anyhow!("User does not exist")) }
-            }
+            m.1
         },
         Err(e) => { return Err(anyhow::anyhow!(e)) }
     };

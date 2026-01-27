@@ -2,7 +2,7 @@ use crate::Message;
 use std::{os::linux::raw::stat, sync::Arc};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use tokio::{io::{self, AsyncBufReadExt, BufReader}, sync::Mutex};
-use pluton_core::{cryptography::{get_signing_key, sign_message}, networking::definitions::{self, TextNetworkMessage}};
+use pluton_core::{cryptography::{get_signing_key, sign_message}, helper, networking::definitions::{self, TextNetworkMessage}};
 use chrono::{Local, Utc, TimeZone};
 use tokio_tungstenite::tungstenite::{client, http::status};
 
@@ -92,6 +92,19 @@ pub async fn manage_request(msg: TextNetworkMessage, client_state: Arc<Mutex<def
                 peer.status = status_change.status;
             }
 
+            drop(client_lock);
+        }
+        definitions::TextNetworkMessage::UserJoin(join_info) => {
+            let mut client_lock = client_state.lock().await;
+
+            let peer = definitions::Peer {
+                username: join_info.username,
+                address: join_info.address,
+                status: definitions::UserStatus::Online,
+                roles: vec![]
+            };
+
+            client_lock.peers.insert(join_info.public_key, peer);
             drop(client_lock);
         }
         _ => { } // Client messages are ignored

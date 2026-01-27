@@ -28,7 +28,7 @@ async fn main() {
     let client_state = Arc::new(Mutex::new(definitions::ClientState {
         peers: HashMap::new(),
         current_message_id: 0,
-        signing_key: signing_key,
+        signing_key,
         current_channel: definitions::Channel {id: 0, name: String::from("general") },
         current_messages: vec![],
         message_channels: vec![],
@@ -81,8 +81,11 @@ async fn main() {
 
     let stdin_to_ws = stdin_rx.map(Ok).forward(outgoing);
     let ws_to_stdout = {
-        incoming.for_each(|message| async {
-            cli_helper::handle_incoming(message.unwrap(), client_state.clone()).await;
+        incoming.for_each(|message| async { 
+            match message {
+                Ok(message) => cli_helper::handle_incoming(message, client_state.clone()).await,
+                Err(e) => eprintln!("{e}")
+            }
         })
     };
 

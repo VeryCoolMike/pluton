@@ -5,8 +5,11 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 
 use crate::server::{helper, database};
 
-pub async fn kick_user(request: definitions::ClientKickRequest, clients: helper::PeerMap, database: Arc<Database>) {
-    // First we need to remove the client
+pub async fn kick_user(
+    request: definitions::ClientKickRequest,
+    clients: helper::PeerMap,
+    database: Arc<Database>
+) -> anyhow::Result<()> {
     let recipient = {
         let client_lock = clients.lock().await;
         client_lock
@@ -15,7 +18,9 @@ pub async fn kick_user(request: definitions::ClientKickRequest, clients: helper:
             .map(|(k, _)| *k)
     };
 
-    let Some(recipient) = recipient else { return };
+    let Some(recipient) = recipient else {
+        return Err(anyhow::anyhow!("user does not exist"))
+    };
 
     let mut client_lock = clients.lock().await;
     
@@ -25,5 +30,7 @@ pub async fn kick_user(request: definitions::ClientKickRequest, clients: helper:
 
     client_lock.remove(&recipient);
 
-    database.remove_user(request.recipient);
+    database::remove_user(&request.recipient, database.clone()).await?;
+
+    Ok(())
 }
