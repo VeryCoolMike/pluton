@@ -67,21 +67,21 @@ async fn get_profile(
         SELECT username, biography
         FROM users
         WHERE public_key = (?)
-    ", params![helper::base64::from_base64(public_key)])
+    ", params![helper::base64::from_base64url(public_key)])
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
 
-    if let Some(user) = user_row.next().await.map_err(|_| StatusCode::NOT_FOUND)? {
+    if let Some(user) = user_row.next().await.map_err(|_| StatusCode::BAD_REQUEST)? {
         let profile = UserProfile {
-            username: user.get(0).map_err(|_| StatusCode::NOT_FOUND)?,
-            biography: user.get(1).map_err(|_| StatusCode::NOT_FOUND)?
+            username: user.get(0).map_err(|_| StatusCode::BAD_REQUEST)?,
+            biography: user.get(1).map_err(|_| StatusCode::BAD_REQUEST)?
         };
 
         return Ok(axum::Json(profile));
     }
 
-    Err(StatusCode::IM_A_TEAPOT)
+    Err(StatusCode::BAD_REQUEST)
 }
 
 async fn update_profile(

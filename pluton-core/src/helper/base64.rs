@@ -83,6 +83,25 @@ pub fn from_base64(input: String) -> Vec<u8> {
     current_vec
 }
 
+pub fn to_base64url(input: Vec<u8>) -> String {
+    let mut to_base64_normal = to_base64(input);
+
+    to_base64_normal = to_base64_normal.replace("+", "-");
+    to_base64_normal = to_base64_normal.replace("/", "_");
+    to_base64_normal = to_base64_normal.replace("=", ".");
+
+    to_base64_normal
+}
+
+pub fn from_base64url(input: String) -> Vec<u8> {
+    let mut new_input = input;
+    new_input = new_input.replace("-", "+");
+    new_input = new_input.replace("_", "/");
+    new_input = new_input.replace(".", "=");
+
+    from_base64(new_input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
