@@ -110,6 +110,10 @@ pub fn from_base64url(input: String) -> Vec<u8> {
 
     let remainder = new_input.len() % 4;
 
+    if remainder == 1 {
+        return Vec::new();
+    }
+
     if remainder != 0 {
         new_input.push_str(&"=".repeat(4 - remainder));
     }
