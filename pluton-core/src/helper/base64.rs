@@ -47,6 +47,12 @@ pub fn to_base64(input: Vec<u8>) -> String {
 
 
 pub fn from_base64(input: String) -> Vec<u8> {
+    let bytes = input.as_bytes();
+
+    if !bytes.len().is_multiple_of(4) {
+        return Vec::new();
+    }
+
     let mut current_vec = Vec::with_capacity(input.len());
 
     // https://en.wikipedia.org/wiki/Base64
@@ -81,6 +87,38 @@ pub fn from_base64(input: String) -> Vec<u8> {
     }
 
     current_vec
+}
+
+pub fn to_base64url(input: Vec<u8>) -> String {
+    // Convert to base64
+    let mut to_base64_normal = to_base64(input);
+
+    to_base64_normal = to_base64_normal.replace("+", "-");
+    to_base64_normal = to_base64_normal.replace("/", "_");
+    to_base64_normal = to_base64_normal.trim_end_matches("=").to_string();
+
+    to_base64_normal
+}
+
+// This accepts a base64 url
+pub fn from_base64url(input: String) -> Vec<u8> {
+    let mut new_input = input;
+
+    new_input = new_input.replace("-", "+");
+    new_input = new_input.replace("_", "/");
+    new_input = new_input.replace(".", "=");
+
+    let remainder = new_input.len() % 4;
+
+    if remainder == 1 {
+        return Vec::new();
+    }
+
+    if remainder != 0 {
+        new_input.push_str(&"=".repeat(4 - remainder));
+    }
+
+    from_base64(new_input)
 }
 
 #[cfg(test)]
