@@ -3,9 +3,11 @@ use std::sync::Arc;
 use axum::{
     Router, extract::{Json, Path, State}, http::{Error, StatusCode}, response::IntoResponse, routing::{get, post}
 };
+use ed25519_dalek::{ed25519::signature, Signature, VerifyingKey};
 use libsql::{Builder, params, Database};
 use serde::{Serialize, Deserialize};
-use pluton_core::helper;
+use pluton_core::{helper, networking::definitions, networking::definitions::home};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize)]
 struct UserProfile {
@@ -59,8 +61,7 @@ async fn get_profile(
     Path(public_key): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<UserProfile>, StatusCode> {
-    let conn = state.clone().db.connect().expect("Unable to connect to database");
-
+    let conn = state.clone().db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Have to check find the user
     let mut user_row = conn.query("
@@ -69,7 +70,7 @@ async fn get_profile(
         WHERE public_key = (?)
     ", params![helper::base64::from_base64url(public_key)])
         .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
 
     if let Some(user) = user_row.next().await.map_err(|_| StatusCode::BAD_REQUEST)? {
@@ -85,6 +86,65 @@ async fn get_profile(
 }
 
 async fn update_profile(
-) {
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<home::SignedChangeRequest>
+) -> Result<StatusCode, StatusCode> {
+    let signature_vec = helper::base64::from_base64url(payload.signature);
+    let signature_bytes: [u8; 64] = signature_vec
+        .as_slice()
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
+    let signature: Signature = Signature::from_bytes(&signature_bytes);
+
+    let public_key_vec = helper::base64::from_base64url(payload.public_key.clone());
+    let public_key_bytes: [u8; 32] = public_key_vec
+        .as_slice()
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let public_key: VerifyingKey = VerifyingKey::from_bytes(&public_key_bytes)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Check if the payload is true
+    if !pluton_core::cryptography::verify_signature(&payload.payload, &signature, &public_key).await {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let request: home::ChangeRequestPayload = serde_json::from_str(&payload.payload)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let current_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .as_secs() as i64;
+
+    if (current_time - request.timestamp).abs() > 60 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let conn = state.clone().db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    match request.action {
+        home::ChangeAction::Username(new_username) => {
+            conn.execute("
+                UPDATE users
+                SET username = (?)
+                WHERE public_key = (?)
+            ", params![new_username, public_key_vec])
+                .await
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+        }
+        home::ChangeAction::Biography(new_biography) => {
+            conn.execute("
+                UPDATE users
+                SET biography = (?)
+                WHERE public_key = (?)
+            ", params![new_biography, public_key_vec])
+                .await
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+        }
+    }
+
+    Ok(StatusCode::OK)
 }
