@@ -5,6 +5,7 @@ use std::{ops::Range, collections::HashMap};
 pub const VERSION: u32 = 1;
 
 mod authentication;
+pub mod home;
 
 pub use authentication::*;
 
