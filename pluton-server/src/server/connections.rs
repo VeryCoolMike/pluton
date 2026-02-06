@@ -210,24 +210,27 @@ pub async fn handle_connection(
                     definitions::TextNetworkMessage::ClientKickRequest(request) => {
                         // We need to check that the user has the permissions
                         
-                        let mut peers = peer_map.lock().await;
-                        
-                        let self_peer = peers.get_mut(&addr);
+                        let self_peer = {
+                            let peers = peer_map.lock().await;
+                            peers.get(&addr).cloned()
+                        };
 
-                        if let Some(peer) = self_peer {
-                            let permission = database::check_role_permission(peer, database.clone(), definitions::RolePermissions::Kick).await;
+                        let Some(peer) = self_peer else {
+                            return Ok(());
+                        };
 
-                            let safe_permission = match permission {
-                                Ok(m) => m,
-                                Err(e) => {
-                                    eprintln!("Error when checking role permissions: {e}");
-                                    panic!("i should NOT be doing this")
-                                }
-                            };
+                        let permission = database::check_role_permission(&peer, database.clone(), definitions::RolePermissions::Kick).await;
 
-                            if safe_permission {
-                                moderation::kick_user(request, peer_map.clone(), database.clone()).await; 
+                        let safe_permission = match permission {
+                            Ok(m) => m,
+                            Err(e) => {
+                                eprintln!("Error when checking role permissions: {e}");
+                                panic!("i should NOT be doing this")
                             }
+                        };
+
+                        if safe_permission {
+                            moderation::kick_user(request, peer_map.clone(), database.clone()).await; 
                         }
                     }
                     _ => { } // Server messages are ignored

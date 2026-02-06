@@ -7,6 +7,10 @@ use crate::server::helper::PeerInfo;
 pub async fn get_messages(range: Range<u64>, channel: definitions::Channel, database: Arc<Database>) -> anyhow::Result<Vec<ServerTextMessage>> {
     let conn = database.connect()?;
 
+    if range.end < range.start {
+        return Err(anyhow::anyhow!("Range end is smaller than range start."));
+    }
+
     let mut query_messages = conn.query("
         SELECT plaintext, sender, timestamp, id
         FROM messages
