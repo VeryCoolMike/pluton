@@ -18,8 +18,14 @@ pub struct ChangeRequestPayload {
     pub action: ChangeAction,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct AccountCreation {
+    profile: UserProfile,
+    timestamp: i64
+}
+
 #[derive(Serialize, Deserialize, Clone)]
-pub struct SignedChangeRequest {
+pub struct SignedRequest {
     pub public_key: String, // base64
     pub payload: String,
     pub signature: String // base64

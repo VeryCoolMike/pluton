@@ -57,6 +57,27 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
+async fn check_user(payload: Json<home::SignedRequest>) -> Result<bool, StatusCode> {
+    let signature_vec = helper::base64::from_base64url(payload.signature);
+    let signature_bytes: [u8; 64] = signature_vec
+        .as_slice()
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let signature: Signature = Signature::from_bytes(&signature_bytes);
+
+    let public_key_vec = helper::base64::from_base64url(payload.public_key.clone());
+    let public_key_bytes: [u8; 32] = public_key_vec
+        .as_slice()
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let public_key: VerifyingKey = VerifyingKey::from_bytes(&public_key_bytes)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    Ok(true)
+}
+
 async fn get_profile(
     Path(public_key): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -87,24 +108,9 @@ async fn get_profile(
 
 async fn update_profile(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<home::SignedChangeRequest>
+    Json(payload): Json<home::SignedRequest>
 ) -> Result<StatusCode, StatusCode> {
-    let signature_vec = helper::base64::from_base64url(payload.signature);
-    let signature_bytes: [u8; 64] = signature_vec
-        .as_slice()
-        .try_into()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let signature: Signature = Signature::from_bytes(&signature_bytes);
-
-    let public_key_vec = helper::base64::from_base64url(payload.public_key.clone());
-    let public_key_bytes: [u8; 32] = public_key_vec
-        .as_slice()
-        .try_into()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    let public_key: VerifyingKey = VerifyingKey::from_bytes(&public_key_bytes)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Check if the payload is true
     if !pluton_core::cryptography::verify_signature(&payload.payload, &signature, &public_key).await {
@@ -145,6 +151,15 @@ async fn update_profile(
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
         }
     }
+
+    Ok(StatusCode::OK)
+}
+
+async fn create_profile(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<home::SignedRequest>
+) -> Result<StatusCode, StatusCode> {
+
 
     Ok(StatusCode::OK)
 }
