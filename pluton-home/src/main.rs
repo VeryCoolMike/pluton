@@ -6,7 +6,7 @@ use axum::{
 use ed25519_dalek::{ed25519::signature, Signature, VerifyingKey};
 use libsql::{Builder, params, Database};
 use serde::{Serialize, Deserialize};
-use pluton_core::{helper, networking::definitions, networking::definitions::home};
+use pluton_core::{cryptography, helper, networking::definitions::{self, home}};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize)]
@@ -57,6 +57,27 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
+async fn check_user(payload: Json<home::SignedRequest>) -> Result<bool, StatusCode> {
+    let signature_vec = helper::base64::from_base64url(payload.signature.clone());
+    let signature_bytes: [u8; 64] = signature_vec
+        .as_slice()
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let signature: Signature = Signature::from_bytes(&signature_bytes);
+
+    let public_key_vec = helper::base64::from_base64url(payload.public_key.clone());
+    let public_key_bytes: [u8; 32] = public_key_vec
+        .as_slice()
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let public_key: VerifyingKey = VerifyingKey::from_bytes(&public_key_bytes)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    return Ok(cryptography::verify_signature(&payload.payload, &signature, &public_key).await);
+}
+
 async fn get_profile(
     Path(public_key): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -87,29 +108,15 @@ async fn get_profile(
 
 async fn update_profile(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<home::SignedChangeRequest>
+    Json(payload): Json<home::SignedRequest>
 ) -> Result<StatusCode, StatusCode> {
-    let signature_vec = helper::base64::from_base64url(payload.signature);
-    let signature_bytes: [u8; 64] = signature_vec
-        .as_slice()
-        .try_into()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    let signature: Signature = Signature::from_bytes(&signature_bytes);
-
-    let public_key_vec = helper::base64::from_base64url(payload.public_key.clone());
-    let public_key_bytes: [u8; 32] = public_key_vec
-        .as_slice()
-        .try_into()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    let public_key: VerifyingKey = VerifyingKey::from_bytes(&public_key_bytes)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Check if the payload is true
-    if !pluton_core::cryptography::verify_signature(&payload.payload, &signature, &public_key).await {
+    if !check_user(Json(payload.clone())).await? {
         return Err(StatusCode::BAD_REQUEST);
     }
+
+    let public_key_bytes: Vec<u8> = helper::base64::from_base64url(payload.public_key);
 
     let request: home::ChangeRequestPayload = serde_json::from_str(&payload.payload)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -131,7 +138,7 @@ async fn update_profile(
                 UPDATE users
                 SET username = (?)
                 WHERE public_key = (?)
-            ", params![new_username, public_key_vec])
+            ", params![new_username, public_key_bytes])
                 .await
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
         }
@@ -140,11 +147,20 @@ async fn update_profile(
                 UPDATE users
                 SET biography = (?)
                 WHERE public_key = (?)
-            ", params![new_biography, public_key_vec])
+            ", params![new_biography, public_key_bytes])
                 .await
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
         }
     }
+
+    Ok(StatusCode::OK)
+}
+
+async fn create_profile(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<home::SignedRequest>
+) -> Result<StatusCode, StatusCode> {
+
 
     Ok(StatusCode::OK)
 }
