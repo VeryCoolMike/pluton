@@ -21,18 +21,15 @@ pub async fn kick_user(request: definitions::ClientKickRequest, clients: helper:
     };
 
 
-    let mut client_lock = clients.lock().await;
-    
-    let peer = if let Some(peer) = client_lock.get(&recipient_addr) {
-        let _ = peer.tx.unbounded_send(Message::Close(None));
-        peer
-    } else {
-        return Err(anyhow::anyhow!("Recipient not found"));
+    let peer = {
+        let mut client_lock = clients.lock().await;
+        client_lock.remove(&recipient_addr)
+            .ok_or_else(|| anyhow::anyhow!("Recipient not found"))?
     };
 
-    database::remove_user(peer, database).await?;
+    let _ = peer.tx.unbounded_send(Message::Close(None));
 
-    client_lock.remove(&recipient_addr);
+    database::remove_user(&peer, database).await?;
 
     Ok(())
 }
