@@ -8,7 +8,7 @@ pub async fn get_messages(range: Range<u64>, channel: definitions::Channel, data
     let conn = database.connect()?;
 
     if range.end < range.start {
-        return Err(anyhow::anyhow!("Range end is smaller than range start."));
+        return Ok(vec![]);
     }
 
     let mut query_messages = conn.query("
