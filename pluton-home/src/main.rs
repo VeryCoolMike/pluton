@@ -48,6 +48,7 @@ async fn main() {
     let app = Router::new()
         .route("/profile/{public_key}", get(get_profile))
         .route("/profile", post(update_profile))
+        .route("/create_profile", post(create_profile))
         .with_state(shared_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 6768));
@@ -57,7 +58,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn check_user(payload: Json<home::SignedRequest>) -> Result<bool, StatusCode> {
+async fn check_user_key(payload: Json<home::SignedRequest>) -> Result<bool, StatusCode> {
     let signature_vec = helper::base64::from_base64url(payload.signature.clone());
     let signature_bytes: [u8; 64] = signature_vec
         .as_slice()
@@ -78,6 +79,31 @@ async fn check_user(payload: Json<home::SignedRequest>) -> Result<bool, StatusCo
     return Ok(cryptography::verify_signature(&payload.payload, &signature, &public_key).await);
 }
 
+async fn check_user_full(payload: Json<home::SignedRequest>) -> Result<(), StatusCode> {
+    if !check_user_key(payload.clone()).await? {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    #[derive(Deserialize)]
+    struct TimestampCheck {
+        timestamp: i64
+    }
+
+    let request: TimestampCheck = serde_json::from_str(&payload.payload)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let current_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .as_secs() as i64;
+
+    if (current_time - request.timestamp).abs() > 60 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    Ok(())
+}
+
 async fn get_profile(
     Path(public_key): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -92,7 +118,6 @@ async fn get_profile(
     ", params![helper::base64::from_base64url(public_key)])
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-
 
     if let Some(user) = user_row.next().await.map_err(|_| StatusCode::BAD_REQUEST)? {
         let profile = UserProfile {
@@ -110,27 +135,16 @@ async fn update_profile(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<home::SignedRequest>
 ) -> Result<StatusCode, StatusCode> {
-
-    // Check if the payload is true
-    if !check_user(Json(payload.clone())).await? {
+    if let Err(e) = check_user_full(Json(payload.clone())).await {
         return Err(StatusCode::BAD_REQUEST);
-    }
+    };
 
     let public_key_bytes: Vec<u8> = helper::base64::from_base64url(payload.public_key);
 
+    let conn = state.clone().db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let request: home::ChangeRequestPayload = serde_json::from_str(&payload.payload)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    let current_time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .as_secs() as i64;
-
-    if (current_time - request.timestamp).abs() > 60 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    let conn = state.clone().db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match request.action {
         home::ChangeAction::Username(new_username) => {
@@ -160,7 +174,23 @@ async fn create_profile(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<home::SignedRequest>
 ) -> Result<StatusCode, StatusCode> {
+    if let Err(e) = check_user_full(Json(payload.clone())).await {
+        return Err(StatusCode::BAD_REQUEST);
+    };
 
+    let public_key_bytes: Vec<u8> = helper::base64::from_base64url(payload.public_key);
+
+    let conn = state.clone().db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let request: home::AccountCreation = serde_json::from_str(&payload.payload)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    conn.execute("
+        INSERT INTO users (public_key, username, biography)
+        VALUES (?, ?, ?)
+    ", params![public_key_bytes, request.profile.username, request.profile.biography])
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     Ok(StatusCode::OK)
 }

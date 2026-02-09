@@ -20,8 +20,8 @@ pub struct ChangeRequestPayload {
 
 #[derive(Serialize, Deserialize)]
 pub struct AccountCreation {
-    profile: UserProfile,
-    timestamp: i64
+    pub profile: UserProfile,
+    pub timestamp: i64
 }
 
 #[derive(Serialize, Deserialize, Clone)]
