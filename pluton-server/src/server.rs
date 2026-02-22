@@ -9,16 +9,11 @@ mod database;
 mod helper;
 mod connections;
 mod moderation;
+mod home;
 
 use tokio::{net::{TcpListener, TcpStream}, sync::{broadcast, Mutex}};
 
 pub async fn start_server() -> anyhow::Result<()> {
-    let server_data_path = std::path::Path::new("server_data.db");
-    if !server_data_path.exists() {
-        println!("A server has not been made yet, please create it by running with the flag --create_server.");
-        return Ok(());
-    }
-
     let db = Arc::new(
         Builder::new_local("server_data.db").build().await?
     );

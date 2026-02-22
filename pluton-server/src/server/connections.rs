@@ -38,7 +38,8 @@ pub async fn handle_connection(
         ).await
     {
         Ok(v) => v,
-        Err(_) => {
+        Err(e) => {
+            eprintln!("Authentication failed: {:?}", e);
             let _ = outgoing.send(Message::Close(None)).await;
             return;
         }
@@ -60,19 +61,22 @@ pub async fn handle_connection(
     let public_key = info.public_key;
     let info_clone = info.clone();
 
-    let user_exists = match database::user_exists(&info_clone, database.clone()).await {
+    match database::user_exists(&info_clone, database.clone()).await {
         Ok(m) => {
             m.is_some()
         },
-        Err(_) => return
+        Err(e) => {
+            eprintln!("Failed when attempting to check if the user exists: {e}");
+            return
+        }
     };
 
-    if !user_exists && let Err(e) = database::add_user(&info_clone, database.clone()).await {
+    if let Err(e) = database::add_user(&info_clone, database.clone()).await {
         eprintln!("{e}");
         return
     };
 
-    peer_map.lock().await.insert(addr, info);
+    peer_map.lock().await.insert(addr, info.clone());
     println!("{} has been accepted!", addr);
 
     let broadcast_recipients: Vec<helper::Tx> = {
@@ -80,9 +84,12 @@ pub async fn handle_connection(
         peers.iter().filter(|(peer_addr, _)| *peer_addr != &addr).map(|(_, peer)| peer.tx.clone()).collect()
     };
 
-    let join_alert = definitions::TextNetworkMessage::UserStatusChange(
-        definitions::UserStatusChange {
+    let join_alert = definitions::TextNetworkMessage::UserJoin(
+        definitions::UserOverview {
             public_key,
+            address: info.address,
+            roles: info.roles,
+            username: info.username,
             status: definitions::UserStatus::Online
         }
     );

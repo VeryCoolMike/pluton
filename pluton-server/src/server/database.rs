@@ -1,6 +1,6 @@
 use ed25519_dalek::VerifyingKey;
 use pluton_core::{helper, networking::definitions::{self, ServerTextMessage}};
-use std::{ops::Range, sync::Arc};
+use std::{arch::x86_64, ops::Range, sync::Arc};
 use libsql::{Database, params};
 use crate::server::helper::PeerInfo;
 
@@ -80,8 +80,8 @@ pub async fn add_user(info: &PeerInfo, database: Arc<Database>) -> anyhow::Resul
     let user_id = match user_exists(info, database.clone()).await {
         Ok(m) => {
             match m {
-                Some(v) => v,
-                None => { return Err(anyhow::anyhow!("User somehow does not exist after successful creation")) }
+                Some(m) => m,
+                None => return Err(anyhow::anyhow!("User does not exist after being made"))
             }
         },
         Err(e) => { return Err(anyhow::anyhow!(e)) }
@@ -107,7 +107,7 @@ pub async fn remove_user(info: &PeerInfo, database: Arc<Database>) -> anyhow::Re
     Ok(())
 }
 
-pub async fn user_exists(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<Option<bool>> {
+pub async fn user_exists(info: &PeerInfo, database: Arc<Database>) -> anyhow::Result<Option<i64>> {
     let conn = database.connect()?;
 
     let mut query_user = conn.query("
@@ -118,9 +118,7 @@ pub async fn user_exists(info: &PeerInfo, database: Arc<Database>) -> anyhow::Re
     ).await?;
 
     if let Some(user) = query_user.next().await? {
-        Ok(
-            Some(user.get(0)?)
-        )
+        Ok(Some(user.get(0)?))
     } else {
         Ok(None)
     }
@@ -132,8 +130,8 @@ pub async fn check_role_permission(info: &PeerInfo, database: Arc<Database>, per
     let user_id = match user_exists(info, database.clone()).await {
         Ok(m) => {
             match m {
-                Some(v) => v,
-                None => { return Err(anyhow::anyhow!("User does not exist")) }
+                Some(m) => m,
+                None => return Err(anyhow::anyhow!("User does not exist"))
             }
         },
         Err(e) => { return Err(anyhow::anyhow!(e)) }

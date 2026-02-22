@@ -37,6 +37,7 @@ pub enum TextNetworkMessage {
     UserStatusChange(UserStatusChange),
     ChangeUserStatus(ChangeUserStatus),
     ServerStatus(ServerStatus),
+    UserJoin(UserOverview),
     ClientRequestMessages(ClientRequestMessages),
     ServerRequestMessages(ServerRequestMessages),
 

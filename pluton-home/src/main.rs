@@ -28,7 +28,7 @@ async fn main() {
     conn.execute("
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,
-            public_key BLOB NOT NULL,
+            verifying_key BLOB NOT NULL,
             username TEXT,
             biography TEXT,
             signature TEXT
@@ -46,7 +46,7 @@ async fn main() {
 
 
     let app = Router::new()
-        .route("/profile/{public_key}", get(get_profile))
+        .route("/profile/{verifying_key}", get(get_profile))
         .route("/profile", post(update_profile))
         .route("/create_profile", post(create_profile))
         .with_state(shared_state);
@@ -67,16 +67,16 @@ async fn check_user_key(payload: Json<home::SignedRequest>) -> Result<bool, Stat
 
     let signature: Signature = Signature::from_bytes(&signature_bytes);
 
-    let public_key_vec = helper::base64::from_base64url(payload.public_key.clone());
-    let public_key_bytes: [u8; 32] = public_key_vec
+    let verifying_key_vec = helper::base64::from_base64url(payload.verifying_key.clone());
+    let verifying_key_bytes: [u8; 32] = verifying_key_vec
         .as_slice()
         .try_into()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let public_key: VerifyingKey = VerifyingKey::from_bytes(&public_key_bytes)
+    let verifying_key: VerifyingKey = VerifyingKey::from_bytes(&verifying_key_bytes)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    return Ok(cryptography::verify_signature(&payload.payload, &signature, &public_key).await);
+    return Ok(cryptography::verify_signature(&payload.payload, &signature, &verifying_key).await);
 }
 
 async fn check_user_full(payload: Json<home::SignedRequest>) -> Result<(), StatusCode> {
@@ -105,7 +105,7 @@ async fn check_user_full(payload: Json<home::SignedRequest>) -> Result<(), Statu
 }
 
 async fn get_profile(
-    Path(public_key): Path<String>,
+    Path(verifying_key): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<UserProfile>, StatusCode> {
     let conn = state.clone().db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -114,8 +114,8 @@ async fn get_profile(
     let mut user_row = conn.query("
         SELECT username, biography
         FROM users
-        WHERE public_key = (?)
-    ", params![helper::base64::from_base64url(public_key)])
+        WHERE verifying_key = (?)
+    ", params![helper::base64::from_base64url(verifying_key)])
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
@@ -139,7 +139,7 @@ async fn update_profile(
         return Err(StatusCode::BAD_REQUEST);
     };
 
-    let public_key_bytes: Vec<u8> = helper::base64::from_base64url(payload.public_key);
+    let verifying_key_bytes: Vec<u8> = helper::base64::from_base64url(payload.verifying_key);
 
     let conn = state.clone().db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -151,8 +151,8 @@ async fn update_profile(
             conn.execute("
                 UPDATE users
                 SET username = (?)
-                WHERE public_key = (?)
-            ", params![new_username, public_key_bytes])
+                WHERE verifying_key = (?)
+            ", params![new_username, verifying_key_bytes])
                 .await
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
         }
@@ -160,8 +160,8 @@ async fn update_profile(
             conn.execute("
                 UPDATE users
                 SET biography = (?)
-                WHERE public_key = (?)
-            ", params![new_biography, public_key_bytes])
+                WHERE verifying_key = (?)
+            ", params![new_biography, verifying_key_bytes])
                 .await
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
         }
@@ -178,7 +178,7 @@ async fn create_profile(
         return Err(StatusCode::BAD_REQUEST);
     };
 
-    let public_key_bytes: Vec<u8> = helper::base64::from_base64url(payload.public_key);
+    let verifying_key_bytes: Vec<u8> = helper::base64::from_base64url(payload.verifying_key);
 
     let conn = state.clone().db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -186,9 +186,9 @@ async fn create_profile(
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     conn.execute("
-        INSERT INTO users (public_key, username, biography)
+        INSERT INTO users (verifying_key, username, biography)
         VALUES (?, ?, ?)
-    ", params![public_key_bytes, request.profile.username, request.profile.biography])
+    ", params![verifying_key_bytes, request.profile.username, request.profile.biography])
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 

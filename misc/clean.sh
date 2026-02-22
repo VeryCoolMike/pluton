@@ -1,0 +1,12 @@
+cd ..
+cd pluton-cli
+cargo clean
+cd ..
+cd pluton-server
+cargo clean
+cd ..
+cd pluton-home
+cargo clean
+cd ..
+cd pluton-core
+cargo clean

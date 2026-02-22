@@ -20,7 +20,7 @@ use crate::helper;
 // 4. public key
 type KeyPairInformation = (Vec<u8>, Vec<u8>, SaltString, VerifyingKey);
 
-pub async fn generate_key_pair(password: &str) -> Result<KeyPairInformation, String> {
+pub async fn generate_key_pair(password: &str) -> anyhow::Result<KeyPairInformation> {
     // Generating the password hash with Argon2
     let salt = SaltString::generate(&mut OsRng);
     let params = Params::new(
@@ -28,12 +28,12 @@ pub async fn generate_key_pair(password: &str) -> Result<KeyPairInformation, Str
         2,         // time cost (number of iterations)
         1,         // parallelism (lanes)
         None,
-    ).map_err(|e| format!("Argon2 params error: {:?}", e))?;
+    ).map_err(|e| anyhow::anyhow!("Argon2 params error: {:?}", e))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key_bytes = [0u8; 32];
     argon2
         .hash_password_into(password.as_bytes(), salt.as_ref().as_bytes(), &mut key_bytes)
-        .map_err(|e| format!("Argon2 error: {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("Argon2 error: {:?}", e))?;
 
     // Generating the keypair (public and private key)
     let mut csprng = OsRng;
@@ -46,56 +46,54 @@ pub async fn generate_key_pair(password: &str) -> Result<KeyPairInformation, Str
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
         .encrypt(&nonce, signing_key.as_bytes().as_ref())
-        .map_err(|e| format!("AES-GCM error: {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("AES-GCM error: {:?}", e))?;
     
 
     Ok((ciphertext, nonce.to_vec(), salt, verifying_key))
 }
 
 // Ciphertext and nonce are given as base64
-pub async fn check_password(password: &str) -> Result<bool, String> {
-    let cfg: account_management::Settings = confy::load("pluton", None)
-        .map_err(|_| "Unable to load settings".to_string())?;
+// The bool can be either true or false, Err only represents an internal error
+pub async fn check_password(salt: String, ciphertext: String, nonce: String, password: String) -> anyhow::Result<bool> {
 
     let params = Params::new(
         32 *1024, // 32 MiB memory cost
         2, // time cost (number of iterations)
         1, // parallelism (lanes)
         None,
-    ).map_err(|e| format!("Argon2 params error: {:?}", e))?;
+    ).map_err(|e| anyhow::anyhow!("{}", e))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key_bytes = [0u8; 32];
     argon2
-        .hash_password_into(password.as_bytes(), cfg.salt.as_ref(), &mut key_bytes)
-        .map_err(|e| format!("Argon2 error: {:?}", e))?;
+        .hash_password_into(password.as_bytes(), salt.as_ref(), &mut key_bytes)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
 
-    let ciphertext_bytes = helper::base64::from_base64(cfg.ciphertext);
+    let ciphertext_bytes = helper::base64::from_base64(ciphertext);
 
-    let nonce_bytes = helper::base64::from_base64(cfg.nonce);
+    let nonce_bytes = helper::base64::from_base64(nonce);
     let final_nonce: Nonce<U12> = *Nonce::from_slice(&nonce_bytes);
 
     Ok(cipher.decrypt(&final_nonce, ciphertext_bytes.as_ref()).is_ok())
 }
 
 // Ciphertext and nonce are given as base64
-pub async fn get_signing_key(password: &str) -> Result<SigningKey, String> {
-    let cfg: account_management::Settings = confy::load("pluton", None)
-        .map_err(|_| "Unable to load settings".to_string())?;
+pub async fn get_signing_key(password: &str) -> anyhow::Result<SigningKey> {
+    let cfg: account_management::Account = account_management::get_account().await?;
 
     let params = Params::new(
         32 *1024, // 32 MiB memory cost
         2, // time cost (number of iterations)
         1, // parallelism (lanes)
         None,
-    ).map_err(|e| format!("Argon2 params error: {:?}", e))?;
+    ).map_err(|e| anyhow::anyhow!("{}", e))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key_bytes = [0u8; 32];
     argon2
         .hash_password_into(password.as_bytes(), cfg.salt.as_ref(), &mut key_bytes)
-        .map_err(|e| format!("Argon2 error: {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
@@ -106,10 +104,10 @@ pub async fn get_signing_key(password: &str) -> Result<SigningKey, String> {
     let final_nonce: Nonce<U12> = *Nonce::from_slice(&nonce_bytes);
 
     let decrypted_vec = cipher.decrypt(&final_nonce, ciphertext_bytes.as_ref())
-        .map_err(|_| "Invalid password or corrupted data".to_string())?;
+        .map_err(|_| anyhow::anyhow!("Invalid password or corrupted data"))?;
 
     let byte_array: [u8; 32] = decrypted_vec.try_into()
-        .map_err(|_| "Decrypted key was not 32 bytes".to_string())?;
+        .map_err(|_| anyhow::anyhow!("Decrypted key was not 32 bytes"))?;
 
     let signing_key = SigningKey::from(byte_array);
 

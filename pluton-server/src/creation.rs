@@ -134,7 +134,7 @@ pub async fn create_server() -> anyhow::Result<()> {
             (SELECT id FROM channels WHERE name = 'general' AND type = 'text' LIMIT 1),
             (SELECT id FROM roles WHERE name = 'general' LIMIT 1)
         );
-        ", params![server_name, server_password, "6767", "127.0.0.1"]
+        ", params![server_name, server_password, "6767", "0.0.0.0"]
     ).await?;
 
     // Users
