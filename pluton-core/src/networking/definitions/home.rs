@@ -26,7 +26,7 @@ pub struct AccountCreation {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SignedRequest {
-    pub public_key: String, // base64
-    pub payload: String,
+    pub verifying_key: String, // base64
+    pub payload: String, // Corresponds to a payload
     pub signature: String // base64
 }

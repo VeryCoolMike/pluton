@@ -42,6 +42,11 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     } else {
+        let server_data_path = std::path::Path::new("server_data.db");
+        if !server_data_path.exists() {
+            creation::create_server().await?
+        }
+
         return server::start_server().await;
     }
 

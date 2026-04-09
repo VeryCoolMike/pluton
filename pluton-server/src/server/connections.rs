@@ -38,7 +38,8 @@ pub async fn handle_connection(
         ).await
     {
         Ok(v) => v,
-        Err(_) => {
+        Err(e) => {
+            eprintln!("Authentication failed: {:?}", e);
             let _ = outgoing.send(Message::Close(None)).await;
             return;
         }
@@ -64,15 +65,19 @@ pub async fn handle_connection(
         Ok(m) => {
             m.is_some()
         },
-        Err(_) => return
+        Err(e) => {
+            eprintln!("Failed when attempting to check if the user exists: {e}");
+            return
+        }
     };
 
     if !user_exists && let Err(e) = database::add_user(&info_clone, database.clone()).await {
         eprintln!("{e}");
+        let _ = outgoing.send(Message::Close(None)).await;
         return
     };
 
-    peer_map.lock().await.insert(addr, info);
+    peer_map.lock().await.insert(addr, info.clone());
     println!("{} has been accepted!", addr);
 
     let broadcast_recipients: Vec<helper::Tx> = {
@@ -80,9 +85,12 @@ pub async fn handle_connection(
         peers.iter().filter(|(peer_addr, _)| *peer_addr != &addr).map(|(_, peer)| peer.tx.clone()).collect()
     };
 
-    let join_alert = definitions::TextNetworkMessage::UserStatusChange(
-        definitions::UserStatusChange {
+    let join_alert = definitions::TextNetworkMessage::UserJoin(
+        definitions::UserOverview {
             public_key,
+            address: info.address,
+            roles: info.roles,
+            username: info.username,
             status: definitions::UserStatus::Online
         }
     );
@@ -114,9 +122,18 @@ pub async fn handle_connection(
         3,
     ).await.expect("unable to get recent messages after 3 retries");
 
+    let users = match database::get_users(peer_map.clone(), database.clone()).await {
+        Ok(users) => users,
+        Err(e) => {
+            println!("Users could not be found, critical error: {e}");
+            let _ = outgoing.send(Message::Close(None)).await;
+            return
+        }
+    };
+
     let server_status_message = definitions::TextNetworkMessage::ServerStatus(definitions::ServerStatus {
         name: server_info.name.clone(),
-        users,
+        users, // TODO!
         message_channels: server_info.message_channels.clone(),
         default_channel: server_info.default_channel.clone(),
         voice_channels: server_info.voice_channels.clone(),
@@ -192,6 +209,7 @@ pub async fn handle_connection(
                         if let Some(peer) = self_peer {
                             peer.status = new_status.status;
                         }
+                        // TODO: send all other clients the new user status
                     }
                     definitions::TextNetworkMessage::ClientRequestMessages(request) => {
                         let requested_messages = helper::retry(
@@ -225,7 +243,7 @@ pub async fn handle_connection(
                             Ok(m) => m,
                             Err(e) => {
                                 eprintln!("Error when checking role permissions: {e}");
-                                panic!("i should NOT be doing this")
+                                false
                             }
                         };
 

@@ -121,6 +121,16 @@ pub fn from_base64url(input: String) -> Vec<u8> {
     from_base64(new_input)
 }
 
+pub fn base64_to_base64url(input: String) -> String {
+    let mut new_input = input;
+
+    new_input = new_input.replace("+", "-");
+    new_input = new_input.replace("/", "_");
+    new_input = new_input.trim_end_matches("=").to_string();
+
+    new_input
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

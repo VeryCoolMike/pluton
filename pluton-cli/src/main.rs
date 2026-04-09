@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use pluton_core::networking::definitions;
-use pluton_core::helper;
+use pluton_core::{account_management, helper};
 
 mod cli_helper;
 
@@ -20,13 +20,21 @@ mod cli_helper;
 async fn main() {
     let args: Vec<String> = env::args().collect();
 
-    let signing_key = match cli_helper::login(args).await {
+    let signing_key = match cli_helper::login(args.clone()).await {
         Some(key) => key,
         None => return,
     };
+
+    if let [_, command, server] = args.as_slice() {
+        if command.trim() == "--join_home" {
+            pluton_core::account_management::join_home(server.to_string(), signing_key.clone()).await;
+        }
+    }
+
        
     let client_state = Arc::new(Mutex::new(definitions::ClientState {
         peers: HashMap::new(),
+        known_users: HashMap::new(),
         current_message_id: 0,
         signing_key: signing_key,
         current_channel: definitions::Channel {id: 0, name: String::from("general") },
@@ -45,16 +53,17 @@ async fn main() {
 
     let (mut outgoing, mut incoming) = ws_stream.split(); // SplitSink and SplitStream
 
-    let cfg: pluton_core::account_management::Settings = if let Ok(settings) = confy::load("pluton", None) {
-        settings
-    } else {
-        eprintln!("[cli] Unable to load settings");
-        panic!("[cli] Unable to load settings");
+    let account = match account_management::get_account().await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Getting account error: {e}");
+            return;
+        }
     };
 
-    let username = cfg.username;
+    let username = account.username;
 
-    let public_key = if let Ok(key) = helper::general::vec_to_verifying_key(helper::base64::from_base64(cfg.verifying_key)) {
+    let public_key = if let Ok(key) = helper::general::vec_to_verifying_key(helper::base64::from_base64(account.verifying_key)) {
         key
     } else {
         eprintln!("Failed to get verifying key");
@@ -66,7 +75,7 @@ async fn main() {
         &mut incoming,
         &username,
         public_key,
-        String::new(),
+        account.address,
         client_state.lock().await.signing_key.clone()
     ).await;
 
@@ -77,13 +86,23 @@ async fn main() {
         return;
     }
     
-    // Authenticated with the server
+    // We are now authenticated with the server
 
     let stdin_to_ws = stdin_rx.map(Ok).forward(outgoing);
-    let ws_to_stdout = {
-        incoming.for_each(|message| async {
-            cli_helper::handle_incoming(message.unwrap(), client_state.clone()).await;
-        })
+    let ws_to_stdout = async {
+        while let Some(message) = incoming.next().await {
+            match message {
+                Ok(Message::Close(frame)) => {
+                    eprintln!("[ws] close received {:?}", frame);
+                    break;
+                }
+                Ok(msg) => cli_helper::handle_incoming(msg, client_state.clone()).await,
+                Err(e) => {
+                    eprintln!("[ws] incoming error: {e}");
+                    break;
+                }
+            }
+        }
     };
 
     pin_mut!(stdin_to_ws, ws_to_stdout);
