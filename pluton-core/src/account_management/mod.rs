@@ -1,6 +1,6 @@
 use std::{fs::create_dir, io::prelude::*, time::{SystemTime, UNIX_EPOCH}};
 use anyhow::anyhow;
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{SigningKey, Verifier, VerifyingKey};
 use serde::{Serialize, Deserialize};
 use std::path::{Path, PathBuf};
 use rand::{Rng, RngCore};
@@ -8,7 +8,7 @@ use rand::{Rng, RngCore};
 use tokio::{net::{TcpListener, TcpStream}, sync::{broadcast, Mutex}};
 use futures_util::{StreamExt, SinkExt};
 
-use crate::{cryptography::{self, check_password, get_signing_key}, helper::{self, base64}, networking::definitions};
+use crate::{cryptography::{self, check_password, get_signing_key}, helper::{self, base64}, networking::definitions::{self, home::UserProfile, UserOverview}};
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Account {
@@ -19,6 +19,7 @@ pub struct Account {
     pub salt: String, // salt.as_str()
     pub verifying_key: String, // base64
     pub username: String,
+    pub address: String,
     pub servers: String // base64
 }
 
@@ -110,7 +111,7 @@ pub async fn sign_in(username: String, password: String) -> anyhow::Result<()> {
 }
 
 // This function will return Err if anything is incorrect such as already existing account, etc...
-pub async fn sign_up(username: String, password: String) -> anyhow::Result<()> {
+pub async fn sign_up(username: String, password: String, home_address: String) -> anyhow::Result<()> {
     let mut cfg: Settings = if let Ok(settings) = confy::load("pluton", None) {
         settings
     } else {
@@ -132,10 +133,14 @@ pub async fn sign_up(username: String, password: String) -> anyhow::Result<()> {
             salt: data.2.to_string(),
             verifying_key: helper::base64::to_base64(data.3.as_bytes().to_vec()),
             username: username.clone(),
+            address: home_address.clone(),
             servers: String::new()
         };
 
+        cfg.current_account = account.account_id.clone();
+
         cfg.accounts.push(account);
+
 
         confy::store("pluton", None, cfg)
             .map_err(|_| anyhow::anyhow!("Unable to save settings"))?;
@@ -159,17 +164,23 @@ pub async fn sign_up(username: String, password: String) -> anyhow::Result<()> {
         println!("{}", path.display());
     }
 
+    if home_address != String::new() {
+        let signing_key = cryptography::get_signing_key(&password).await?;
+        join_home(home_address, signing_key).await?;
+    }
+
     sign_in(username, password).await
 }
 
-pub async fn login(username: String, password: String) -> anyhow::Result<()> {
+pub async fn login(username: String, password: String, home_address: String) -> anyhow::Result<()> {
     if check_account_exists().await {
         sign_in(username, password).await
     } else {
-        sign_up(username, password).await
+        sign_up(username, password, home_address).await
     }
 }
 
+// TODO: DOESNT WORK FOR SOME REASON
 pub async fn join_home(server_addr: String, signing_key: SigningKey) -> anyhow::Result<()> {
     let cfg: Account = get_account().await?;
 
@@ -195,16 +206,32 @@ pub async fn join_home(server_addr: String, signing_key: SigningKey) -> anyhow::
 
     let signed_request = definitions::home::SignedRequest {
         payload: payload_string.clone(), 
-        verifying_key: cfg.verifying_key,
-        signature: cryptography::sign_message(&payload_string, &signing_key).await.to_string()
+        verifying_key: helper::base64::base64_to_base64url(cfg.verifying_key),
+        signature: helper::base64::to_base64url(cryptography::sign_message(&payload_string, &signing_key).await.to_bytes().into())
     };
 
     let res = client.post(server_addr + "/create_profile")
-        .json(&account_creation_request)
+        .json(&signed_request)
         .send()
         .await?;
 
     Ok(())
+}
+
+// RETURNS ERROR WHEN IT SHOULDNT OR SOMETHING, ANYWAY ITS BROKEN!
+pub async fn request_home_info(server_addr: String, verifying_key: VerifyingKey) -> anyhow::Result<UserProfile> {
+    if server_addr == String::new() {
+        return Err(anyhow::anyhow!("No home provided"))
+    }
+    let client = reqwest::Client::new();
+
+    let response = client.get(server_addr + "/profile/" + &helper::base64::to_base64url(verifying_key.to_bytes().to_vec()))
+        .send()
+        .await?;
+
+    let response_json: UserProfile = response.json::<UserProfile>().await?;
+
+    Ok(response_json)
 }
 
 pub async fn check_password_strength(password: String) -> String {

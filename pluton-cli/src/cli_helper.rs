@@ -69,6 +69,19 @@ pub async fn manage_request(msg: TextNetworkMessage, client_state: Arc<Mutex<def
             
         }
         definitions::TextNetworkMessage::UserJoin(user_overview) => {
+            let peer = definitions::Peer {
+                username: user_overview.username,
+                address: user_overview.address,
+                roles: user_overview.roles,
+                status: user_overview.status
+            };
+
+            let mut client_lock = client_state.lock().await;
+
+            client_lock.peers.insert(user_overview.public_key, peer);
+
+            drop(client_lock);
+
             return
         }
         definitions::TextNetworkMessage::ServerRequestMessages(response) => {
@@ -222,11 +235,14 @@ pub async fn manage_commands(
 }
 
 pub async fn login(args: Vec<String>) -> Option<SigningKey> {
-    if let [_, command, username, password] = args.as_slice() {
-        if command.trim() == "--create_account" {
-            pluton_core::account_management::sign_up(username.to_string(), password.to_string()).await;
-            return None
-        }
+    if let [_, command, username, password, address] = args.as_slice() && command.trim() == "--create_account" {
+        let result = pluton_core::account_management::sign_up(
+            username.to_string(),
+            password.to_string(),
+            address.to_string()
+        ).await;
+        println!("{:?}", result);
+        return None
     }
 
     if !pluton_core::account_management::check_account_exists().await {
@@ -235,6 +251,7 @@ pub async fn login(args: Vec<String>) -> Option<SigningKey> {
     }
 
     println!("What is your username? ");
+
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
 
@@ -249,7 +266,10 @@ pub async fn login(args: Vec<String>) -> Option<SigningKey> {
     let raw_password = lines.next_line().await.ok()?.unwrap_or_default();
     let password = raw_password.trim();
 
-    pluton_core::account_management::sign_in(username.to_string(), password.to_string()).await;
+    pluton_core::account_management::sign_in(
+        username.to_string(),
+        password.to_string()
+    ).await;
 
     // Now connecting to server
 

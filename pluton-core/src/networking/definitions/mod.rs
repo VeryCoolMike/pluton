@@ -20,6 +20,7 @@ pub struct Peer {
 
 pub struct ClientState {
     pub peers: HashMap<VerifyingKey, Peer>,
+    pub known_users: HashMap<VerifyingKey, Peer>, // All users that are in the server
     pub current_message_id: u32,
     pub signing_key: SigningKey,
     pub current_channel: Channel,
@@ -106,7 +107,7 @@ pub struct UserOverview {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ServerStatus {
     pub name: String,
-    pub users: Vec<UserOverview>,
+    pub users: Vec<UserOverview>, // All users in server, not just active
     pub message_channels: Vec<Channel>,
     pub default_channel: Channel,
     pub voice_channels: Vec<Channel>,

@@ -141,7 +141,8 @@ pub async fn create_server() -> anyhow::Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,
-            public_key BLOB NOT NULL
+            public_key BLOB NOT NULL UNIQUE,
+            address TEXT
         );", ()
     ).await?;
 

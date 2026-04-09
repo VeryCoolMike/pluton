@@ -34,6 +34,7 @@ async fn main() {
        
     let client_state = Arc::new(Mutex::new(definitions::ClientState {
         peers: HashMap::new(),
+        known_users: HashMap::new(),
         current_message_id: 0,
         signing_key: signing_key,
         current_channel: definitions::Channel {id: 0, name: String::from("general") },
@@ -74,7 +75,7 @@ async fn main() {
         &mut incoming,
         &username,
         public_key,
-        String::new(),
+        account.address,
         client_state.lock().await.signing_key.clone()
     ).await;
 
@@ -85,7 +86,7 @@ async fn main() {
         return;
     }
     
-    // Authenticated with the server
+    // We are now authenticated with the server
 
     let stdin_to_ws = stdin_rx.map(Ok).forward(outgoing);
     let ws_to_stdout = async {

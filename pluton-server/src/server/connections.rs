@@ -61,7 +61,7 @@ pub async fn handle_connection(
     let public_key = info.public_key;
     let info_clone = info.clone();
 
-    match database::user_exists(&info_clone, database.clone()).await {
+    let user_exists = match database::user_exists(&info_clone, database.clone()).await {
         Ok(m) => {
             m.is_some()
         },
@@ -71,8 +71,9 @@ pub async fn handle_connection(
         }
     };
 
-    if let Err(e) = database::add_user(&info_clone, database.clone()).await {
+    if !user_exists && let Err(e) = database::add_user(&info_clone, database.clone()).await {
         eprintln!("{e}");
+        let _ = outgoing.send(Message::Close(None)).await;
         return
     };
 
@@ -121,9 +122,18 @@ pub async fn handle_connection(
         3,
     ).await.expect("unable to get recent messages after 3 retries");
 
+    let users = match database::get_users(peer_map.clone(), database.clone()).await {
+        Ok(users) => users,
+        Err(e) => {
+            println!("Users could not be found, critical error: {e}");
+            let _ = outgoing.send(Message::Close(None)).await;
+            return
+        }
+    };
+
     let server_status_message = definitions::TextNetworkMessage::ServerStatus(definitions::ServerStatus {
         name: server_info.name.clone(),
-        users,
+        users, // TODO!
         message_channels: server_info.message_channels.clone(),
         default_channel: server_info.default_channel.clone(),
         voice_channels: server_info.voice_channels.clone(),
@@ -199,6 +209,7 @@ pub async fn handle_connection(
                         if let Some(peer) = self_peer {
                             peer.status = new_status.status;
                         }
+                        // TODO: send all other clients the new user status
                     }
                     definitions::TextNetworkMessage::ClientRequestMessages(request) => {
                         let requested_messages = helper::retry(
@@ -232,7 +243,7 @@ pub async fn handle_connection(
                             Ok(m) => m,
                             Err(e) => {
                                 eprintln!("Error when checking role permissions: {e}");
-                                panic!("i should NOT be doing this")
+                                false
                             }
                         };
 

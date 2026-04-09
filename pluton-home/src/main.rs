@@ -8,12 +8,7 @@ use libsql::{Builder, params, Database};
 use serde::{Serialize, Deserialize};
 use pluton_core::{cryptography, helper, networking::definitions::{self, home}};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-#[derive(Serialize, Deserialize)]
-struct UserProfile {
-    username: String,
-    biography: String,
-}
+use pluton_core::networking::definitions::home::UserProfile;
 
 #[derive(Clone)]
 struct AppState {
@@ -59,11 +54,13 @@ async fn main() {
 }
 
 async fn check_user_key(payload: Json<home::SignedRequest>) -> Result<bool, StatusCode> {
+    println!("Attempting to check user key");
     let signature_vec = helper::base64::from_base64url(payload.signature.clone());
     let signature_bytes: [u8; 64] = signature_vec
         .as_slice()
         .try_into()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+        .map_err(|e| {println!("{e}"); StatusCode::BAD_REQUEST})?;
+    println!("Changed signature into array (correct size)");
 
     let signature: Signature = Signature::from_bytes(&signature_bytes);
 
@@ -72,17 +69,21 @@ async fn check_user_key(payload: Json<home::SignedRequest>) -> Result<bool, Stat
         .as_slice()
         .try_into()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+    println!("Changed verifying key into array (correct size)");
 
     let verifying_key: VerifyingKey = VerifyingKey::from_bytes(&verifying_key_bytes)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+    println!("Deserialised verifying key");
 
     return Ok(cryptography::verify_signature(&payload.payload, &signature, &verifying_key).await);
 }
 
 async fn check_user_full(payload: Json<home::SignedRequest>) -> Result<(), StatusCode> {
+    println!("Attempting to check user full");
     if !check_user_key(payload.clone()).await? {
         return Err(StatusCode::BAD_REQUEST);
     }
+    println!("Checked user key");
 
     #[derive(Deserialize)]
     struct TimestampCheck {
@@ -100,6 +101,7 @@ async fn check_user_full(payload: Json<home::SignedRequest>) -> Result<(), Statu
     if (current_time - request.timestamp).abs() > 60 {
         return Err(StatusCode::BAD_REQUEST);
     }
+    println!("User signed timestamp checked");
 
     Ok(())
 }
@@ -174,9 +176,11 @@ async fn create_profile(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<home::SignedRequest>
 ) -> Result<StatusCode, StatusCode> {
+    println!("Attempting to add user");
     if let Err(e) = check_user_full(Json(payload.clone())).await {
         return Err(StatusCode::BAD_REQUEST);
     };
+    println!("User has been checked");
 
     let verifying_key_bytes: Vec<u8> = helper::base64::from_base64url(payload.verifying_key);
 
@@ -184,6 +188,7 @@ async fn create_profile(
 
     let request: home::AccountCreation = serde_json::from_str(&payload.payload)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+    println!("Request has been deserialised");
 
     conn.execute("
         INSERT INTO users (verifying_key, username, biography)
@@ -191,6 +196,8 @@ async fn create_profile(
     ", params![verifying_key_bytes, request.profile.username, request.profile.biography])
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    println!("User has been added");
 
     Ok(StatusCode::OK)
 }

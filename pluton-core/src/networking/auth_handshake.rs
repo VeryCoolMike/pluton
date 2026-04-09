@@ -19,13 +19,13 @@ pub async fn auth_handshake_client(
     address: String,
     signing_key: SigningKey
 ) -> Result<definitions::HandshakeStatus, definitions::HandshakeError> {
-
     let handshake_start = definitions::ClientHandshakeStart {
         username: username.to_string(),
-        public_key: public_key,
-        address: address,
+        public_key,
+        address: address.clone(),
         version: definitions::VERSION
     };
+
     let request_msg = Message::Text(
         serde_json::to_string(&handshake_start)
             .map_err(|_| definitions::HandshakeError::SerializationError)?
