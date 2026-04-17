@@ -2,6 +2,8 @@ mod app;
 mod network;
 mod ui;
 
+use std::collections::HashMap;
+
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -449,13 +451,16 @@ fn handle_chat_input(
         KeyCode::Char(c) => {
             if c == 'u' && modifiers.contains(KeyModifiers::ALT) {
                 tokio::spawn(async move {
-                    let file = AsyncFileDialog::new()
+                    let Some(file) =  AsyncFileDialog::new()
                         .add_filter("image", &["png", "jpg", "jpeg"])
                         .set_directory("/")
                         .pick_file()
-                        .await;
+                        .await
+                    else {
+                        return;
+                    };
 
-                    let data = file.unwrap().read().await;
+                    let data = file.read().await;
                 });
             } else {
                 app.input_insert(c);
@@ -477,6 +482,8 @@ fn handle_incoming(msg: definitions::TextNetworkMessage, app: &mut App) {
         }
         definitions::TextNetworkMessage::ServerStatus(status) => {
             app.server_name = status.name;
+            app.peers = HashMap::new();
+
             for user in &status.users {
                 app.peers.insert(
                     user.public_key,

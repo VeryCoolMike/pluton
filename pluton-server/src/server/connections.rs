@@ -279,8 +279,10 @@ pub async fn handle_connection(
 
     let leave_alert = definitions::TextNetworkMessage::UserLeave(public_key);
 
-    for tx in broadcast_recipients {
-        tx.unbounded_send(Message::Text(serde_json::to_string(&leave_alert).expect("unable to serde").into())).unwrap();
+    let peer_lock = peer_map.lock().await;
+
+    for peer in peer_lock.values() {
+        peer.tx.unbounded_send(Message::Text(serde_json::to_string(&leave_alert).expect("unable to serde").into())).unwrap();
     }
 
     peer_map.lock().await.remove(&addr);
