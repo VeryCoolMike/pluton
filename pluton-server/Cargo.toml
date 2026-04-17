@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
+axum = { version = "0.8.8", features = ["multipart"] }
 cliclack = { path = "cliclack/" } 
 console = "0.15"
 ed25519-dalek = "2.2.0"

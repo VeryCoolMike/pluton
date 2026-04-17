@@ -40,7 +40,8 @@ async fn main() {
         current_channel: definitions::Channel {id: 0, name: String::from("general") },
         current_messages: vec![],
         message_channels: vec![],
-        voice_channels: vec![]
+        voice_channels: vec![],
+        session_id: String::new()
     }));
 
     let url = env::args().nth(1).unwrap_or_else(|| String::from("ws://127.0.0.1:6767"));
@@ -79,12 +80,22 @@ async fn main() {
         client_state.lock().await.signing_key.clone()
     ).await;
 
-    if handshake_result == Ok(definitions::HandshakeStatus::Complete) {
-        println!("Successful handshake");
-    } else {
-        println!("Could not complete handshake: {:?}", handshake_result);
-        return;
-    }
+    let session_id = match handshake_result {
+        Ok((definitions::HandshakeStatus::Complete, token)) => {
+            println!("Successful handshake");
+            token
+        }
+        Ok((status, _)) => {
+            println!("Could not complete handshake: {:?}", status);
+            return;
+        }
+        Err(e) => {
+            println!("Could not complete handshake: {:?}", e);
+            return;
+        }
+    };
+
+    client_state.lock().await.session_id = session_id;
     
     // We are now authenticated with the server
 

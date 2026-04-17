@@ -18,7 +18,7 @@ pub async fn auth_handshake_client(
     public_key: VerifyingKey,
     address: String,
     signing_key: SigningKey
-) -> Result<definitions::HandshakeStatus, definitions::HandshakeError> {
+) -> Result<(definitions::HandshakeStatus, String), definitions::HandshakeError> {
     let handshake_start = definitions::ClientHandshakeStart {
         username: username.to_string(),
         public_key,
@@ -73,7 +73,10 @@ pub async fn auth_handshake_client(
         return Err(definitions::HandshakeError::ServerError);
     };
 
-    server_response.status_code
+    match server_response.status_code {
+        Ok(status) => Ok((status, server_response.session_token)),
+        Err(e) => Err(e),
+    }
 }
 
 pub async fn auth_handshake_server(

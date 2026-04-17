@@ -26,7 +26,8 @@ pub struct ClientState {
     pub current_channel: Channel,
     pub current_messages: Vec<ServerTextMessage>,
     pub message_channels: Vec<Channel>,
-    pub voice_channels: Vec<Channel>
+    pub voice_channels: Vec<Channel>,
+    pub session_id: String
 }
 
 // Text Messages
@@ -39,6 +40,7 @@ pub enum TextNetworkMessage {
     ChangeUserStatus(ChangeUserStatus),
     ServerStatus(ServerStatus),
     UserJoin(UserOverview),
+    UserLeave(VerifyingKey), // public key
     ClientRequestMessages(ClientRequestMessages),
     ServerRequestMessages(ServerRequestMessages),
 
