@@ -302,6 +302,25 @@ pub async fn get_default_channel(database: Arc<Database>) -> anyhow::Result<defi
     Err(anyhow::anyhow!("default channel not found"))
 }
 
+pub async fn add_file(uploader: &VerifyingKey, file_name: &str, file_data: &[u8], timestamp: i64, database: Arc<Database>) -> anyhow::Result<i64> {
+    let conn = database.connect()?;
+
+    conn.execute("
+        INSERT INTO files (uploader, file_name, file_data, timestamp)
+        VALUES (?, ?, ?, ?);", params![
+            uploader.as_bytes(),
+            file_name,
+            file_data,
+            timestamp
+        ]
+    ).await?;
+
+    let mut row = conn.query("SELECT last_insert_rowid();", params![]).await?;
+    let id: i64 = row.next().await?.unwrap().get(0)?;
+
+    Ok(id)
+}
+
 pub async fn get_message_channels(database: Arc<Database>) -> anyhow::Result<Vec<definitions::Channel>> {
     let conn = database.connect()?;
 

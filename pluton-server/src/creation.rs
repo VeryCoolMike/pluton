@@ -174,6 +174,18 @@ pub async fn create_server() -> anyhow::Result<()> {
         ON messages(channel_id, timestamp DESC, id DESC);", ()
     ).await?;
 
+    // Files
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY,
+            uploader BLOB NOT NULL,
+            file_name TEXT NOT NULL,
+            file_data BLOB NOT NULL,
+            timestamp INTEGER NOT NULL,
+            FOREIGN KEY (uploader) REFERENCES users(public_key)
+        );", ()
+    ).await?;
+
     outro("Server has been made, please run --start_server")?;
 
     Ok(())

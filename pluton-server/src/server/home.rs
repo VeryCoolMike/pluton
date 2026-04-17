@@ -3,6 +3,7 @@ use reqwest::{Client};
 use pluton_core::{cryptography, helper, networking::definitions};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// Can't remember why I made this and it is never referenced
 pub async fn get_account_info(verifying_key: VerifyingKey, server_addr: String) -> Result<String, anyhow::Error> {
     let client = reqwest::Client::new();
 

@@ -4,8 +4,8 @@ use std::{
 
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{SinkExt, StreamExt, future::{self, join}, pin_mut, stream::TryStreamExt};
-
-use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions::{self, UserOverview}};
+use rand::RngCore;
+use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions::{self, UserOverview}, helper::base64};
 use crate::server::{database, helper, moderation};
 
 use tokio::{net::{TcpListener, TcpStream}, sync::{broadcast, Mutex}};
@@ -27,14 +27,17 @@ pub async fn handle_connection(
 
     let (mut outgoing, mut incoming) = ws_stream.split();
 
-    let session_token = String::new();
+    let mut session_token_bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut session_token_bytes);
+    let session_token = base64::to_base64(session_token_bytes.to_vec());
+
 
     // Authentication protocol
     let (join_request, _) = match
         pluton_core::networking::auth_handshake::auth_handshake_server(
             &mut outgoing,
             &mut incoming,
-            session_token
+            session_token.clone()
         ).await
     {
         Ok(v) => v,
@@ -56,7 +59,8 @@ pub async fn handle_connection(
         public_key: join_request.public_key,
         address: join_request.address,
         roles: vec![],
-        status: definitions::UserStatus::Online
+        status: definitions::UserStatus::Online,
+        session_id: session_token
     };
     let public_key = info.public_key;
     let info_clone = info.clone();
@@ -95,7 +99,7 @@ pub async fn handle_connection(
         }
     );
 
-    for tx in broadcast_recipients {
+    for tx in broadcast_recipients.clone() {
         tx.unbounded_send(Message::Text(serde_json::to_string(&join_alert).expect("unable to serde").into())).unwrap();
     }
 
@@ -272,5 +276,14 @@ pub async fn handle_connection(
     future::select(broadcast_incoming, receive_from_others).await;
 
     println!("{} disconnected", &addr);
+
+    let leave_alert = definitions::TextNetworkMessage::UserLeave(public_key);
+
+    let peer_lock = peer_map.lock().await;
+
+    for peer in peer_lock.values() {
+        peer.tx.unbounded_send(Message::Text(serde_json::to_string(&leave_alert).expect("unable to serde").into())).unwrap();
+    }
+
     peer_map.lock().await.remove(&addr);
 }
