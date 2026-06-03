@@ -1,7 +1,9 @@
 use ed25519_dalek::VerifyingKey;
 use pluton_core::{account_management, helper, networking::definitions::{self, home, ServerTextMessage, UserOverview, UserStatus}};
+use pluton_core::helper::logging::{pluton_log, Importance};
 use std::{ops::Range, sync::Arc};
 use libsql::{Database, params};
+use mime_guess;
 use crate::server::{database, helper::{PeerInfo, PeerMap}};
 
 pub async fn get_messages(range: Range<u64>, channel: definitions::Channel, database: Arc<Database>) -> anyhow::Result<Vec<ServerTextMessage>> {
@@ -26,6 +28,28 @@ pub async fn get_messages(range: Range<u64>, channel: definitions::Channel, data
     let mut messages: Vec<ServerTextMessage> = vec![];
 
     while let Some(row) = query_messages.next().await? {
+        let mut query_attachments = conn.query("
+                SELECT ma.file_id, f.file_name, f.file_size
+                FROM message_attachments ma
+                JOIN files f ON f.id = ma.file_id
+                WHERE ma.message_id = ?
+                ORDER BY ma.position;", params![
+                     row.get::<u64>(3)?
+            ]
+        ).await?;
+
+        let mut file_vec: Vec<definitions::FileDescriptor> = vec![];
+
+        while let Some(attachment_row) = query_attachments.next().await? {
+            let constructued_descriptor = definitions::FileDescriptor {
+                id: attachment_row.get(0)?,
+                file_name: attachment_row.get(1)?,
+                file_size: attachment_row.get(2)?
+            };
+
+            file_vec.push(constructued_descriptor);
+        }
+
         let sender_bytes: Vec<u8> = row.get(1)?;
         let sender_array: [u8; 32] = sender_bytes
             .try_into()
@@ -38,6 +62,7 @@ pub async fn get_messages(range: Range<u64>, channel: definitions::Channel, data
                 plaintext: row.get::<String>(0)?,
                 sender: VerifyingKey::from_bytes(&sender_array)?,
                 timestamp: row.get::<i64>(2)?,
+                attachments: file_vec,
                 channel_id: channel.id
             }
         );
@@ -51,7 +76,9 @@ pub async fn get_messages(range: Range<u64>, channel: definitions::Channel, data
 pub async fn add_message(message: &ServerTextMessage, channel: definitions::Channel, database: Arc<Database>) -> anyhow::Result<()> {
     let conn = database.connect()?;
 
-    conn.execute("
+    let tx = conn.transaction().await?;
+
+    tx.execute("
         INSERT INTO messages (channel_id, sender, plaintext, timestamp)
         VALUES (?, ?, ?, ?);", params![
             channel.id,
@@ -60,6 +87,24 @@ pub async fn add_message(message: &ServerTextMessage, channel: definitions::Chan
             message.timestamp
         ]
     ).await?;
+
+    // Need to also add to message_attachments so theres a link between message and file
+    
+    let mut row = tx.query("SELECT last_insert_rowid();", params![]).await?;
+    let id: i64 = row.next().await?.unwrap().get(0)?;
+
+    for (i, attachment) in message.attachments.iter().enumerate() {
+        tx.execute("
+            INSERT INTO message_attachments (message_id, file_id, position)
+            VALUES (?, ?, ?);", params![
+                id,
+                attachment.id,
+                i as u64
+            ]
+        ).await?;
+    }
+
+    tx.commit().await?;
 
     Ok(())
 }
@@ -144,7 +189,7 @@ pub async fn get_users(peer_map: PeerMap, database: Arc<Database>) -> anyhow::Re
                 users.push(user_overview);
             }
             Err(e) => {
-                println!("REQUESTING HOME INFO FAILED: {e}");
+                pluton_log(&format!("REQUESTING HOME INFO FAILED: {e}"), Importance::Warn);
                 let peers = peer_map.lock().await;
                 let found = peers.values().find(|p| p.public_key == verifying_key);
 
@@ -306,12 +351,13 @@ pub async fn add_file(uploader: &VerifyingKey, file_name: &str, file_data: &[u8]
     let conn = database.connect()?;
 
     conn.execute("
-        INSERT INTO files (uploader, file_name, file_data, timestamp)
-        VALUES (?, ?, ?, ?);", params![
+        INSERT INTO files (uploader, file_name, file_size, timestamp, file_data)
+        VALUES (?, ?, ?, ?, ?);", params![
             uploader.as_bytes(),
             file_name,
+            file_data.len() as u64,
+            timestamp,
             file_data,
-            timestamp
         ]
     ).await?;
 
@@ -319,6 +365,53 @@ pub async fn add_file(uploader: &VerifyingKey, file_name: &str, file_data: &[u8]
     let id: i64 = row.next().await?.unwrap().get(0)?;
 
     Ok(id)
+}
+
+// Returns file data, file name, MIME type
+pub async fn fetch_file(file_id: u64, database: Arc<Database>) -> anyhow::Result<(Vec<u8>, String, String)> {
+    let conn = database.connect()?;
+
+    let mut query_file = conn.query("
+        SELECT file_data, file_name
+        FROM files
+        WHERE id = ?;", params![file_id]
+    ).await?;
+    
+    if let Some(file) = query_file.next().await? {
+        let file_name = file.get(1)?;
+
+        let mime_type = mime_guess::from_path(&file_name)
+            .first_or_octet_stream()
+            .to_string();
+
+        Ok((file.get(0)?, file_name, mime_type))        
+    } else {
+        Err(anyhow::anyhow!("Unable to find file from fetch_file"))
+    }
+}
+
+
+// Returns file name, MIME type, file size
+pub async fn fetch_file_meta(file_id: u64, database: Arc<Database>) -> anyhow::Result<(String, String, u64)> {
+    let conn = database.connect()?;
+
+    let mut query_file = conn.query("
+        SELECT file_name, file_size
+        FROM files
+        WHERE id = ?;", params![file_id]
+    ).await?;
+    
+    if let Some(file) = query_file.next().await? {
+        let file_name = file.get(0)?;
+
+        let mime_type = mime_guess::from_path(&file_name)
+            .first_or_octet_stream()
+            .to_string();
+
+        Ok((file_name, mime_type, file.get(1)?))
+    } else {
+        Err(anyhow::anyhow!("Unable to find file from fetch_file_meta"))
+    }
 }
 
 pub async fn get_message_channels(database: Arc<Database>) -> anyhow::Result<Vec<definitions::Channel>> {

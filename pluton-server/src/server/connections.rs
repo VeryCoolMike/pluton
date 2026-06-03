@@ -5,7 +5,7 @@ use std::{
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{SinkExt, StreamExt, future::{self, join}, pin_mut, stream::TryStreamExt};
 use rand::RngCore;
-use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions::{self, UserOverview}, helper::base64};
+use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions::{self, UserOverview}, helper::{base64, logging::{pluton_log, Importance}}};
 use crate::server::{database, helper, moderation};
 
 use tokio::{net::{TcpListener, TcpStream}, sync::{broadcast, Mutex}};
@@ -16,14 +16,40 @@ pub async fn handle_connection(
     raw_stream: TcpStream,
     addr: SocketAddr,
     database: Arc<libsql::Database>,
-    server_info: Arc<helper::ServerInfo>
-) {
-    println!("Incoming TCP connection from: {}", addr);
+    server_info: Arc<helper::ServerInfo>,
+) -> anyhow::Result<(), anyhow::Error> {
+    let result = handle_connection_inner(
+        peer_map.clone(), raw_stream, addr, database, server_info
+    ).await;
+
+    pluton_log(&format!("{} disconnected", &addr), Importance::Info);
+
+    if let Some(peer) = peer_map.lock().await.remove(&addr) {
+        let leave_alert = definitions::TextNetworkMessage::UserLeave(peer.public_key);
+
+        let peer_lock = peer_map.lock().await;
+
+        for peer in peer_lock.values() {
+            peer.tx.unbounded_send(Message::Text(serde_json::to_string(&leave_alert).expect("unable to serde").into())).unwrap();
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn handle_connection_inner(
+    peer_map: helper::PeerMap,
+    raw_stream: TcpStream,
+    addr: SocketAddr,
+    database: Arc<libsql::Database>,
+    server_info: Arc<helper::ServerInfo>,
+) -> anyhow::Result<(), anyhow::Error> {
+    pluton_log(&format!("Incoming TCP connection from: {}", addr), Importance::Info);
 
     let ws_stream = tokio_tungstenite::accept_async(raw_stream)
         .await
         .expect("Error during the websocket handshake occurred");
-    println!("WebSocket connection established: {}", addr);
+    pluton_log(&format!("WebSocket connection established: {}", addr), Importance::Info);
 
     let (mut outgoing, mut incoming) = ws_stream.split();
 
@@ -42,9 +68,9 @@ pub async fn handle_connection(
     {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("Authentication failed: {:?}", e);
+            pluton_log(&format!("Authentication failed: {:?}", e), Importance::Warn);
             let _ = outgoing.send(Message::Close(None)).await;
-            return;
+            return Ok(());
         }
     };
 
@@ -70,19 +96,20 @@ pub async fn handle_connection(
             m.is_some()
         },
         Err(e) => {
-            eprintln!("Failed when attempting to check if the user exists: {e}");
-            return
+            pluton_log(&format!("Failed when attempting to check if the user exists: {e}"), Importance::Warn);
+            let _ = outgoing.send(Message::Close(None)).await;
+            return Ok(())
         }
     };
 
     if !user_exists && let Err(e) = database::add_user(&info_clone, database.clone()).await {
-        eprintln!("{e}");
+            pluton_log(&format!("User does not exist after creation: {e}"), Importance::Warn);
         let _ = outgoing.send(Message::Close(None)).await;
-        return
+        return Ok(())
     };
 
     peer_map.lock().await.insert(addr, info.clone());
-    println!("{} has been accepted!", addr);
+    pluton_log(&format!("{} has been accepted!", addr), Importance::Info);
 
     let broadcast_recipients: Vec<helper::Tx> = {
         let peers = peer_map.lock().await; 
@@ -129,9 +156,9 @@ pub async fn handle_connection(
     let users = match database::get_users(peer_map.clone(), database.clone()).await {
         Ok(users) => users,
         Err(e) => {
-            println!("Users could not be found, critical error: {e}");
+            pluton_log(&format!("Users could not be found, critical error: {e}"), Importance::Warn);
             let _ = outgoing.send(Message::Close(None)).await;
-            return
+            return Ok(())
         }
     };
 
@@ -147,13 +174,13 @@ pub async fn handle_connection(
     let _ = outgoing.send(Message::Text(serde_json::to_string(&server_status_message).expect("unable to serde").into())).await;
     
     let broadcast_incoming = incoming.try_for_each(|msg| async {
-        println!("Received a message from {}: {}", addr, msg.to_text().unwrap());
+        pluton_log(&format!("Received a message from {}: {}", addr, msg.to_text().unwrap()), Importance::Info);
         match msg {
             Message::Text(text_network_msg) => {
                 let msg: definitions::TextNetworkMessage = match serde_json::from_str(&text_network_msg) {
                     Ok(m) => m,
                     Err(e) => {
-                        eprintln!("Invalid message: {e} from {addr}");
+                        pluton_log(&format!("Invalid message: {e} from {addr}"), Importance::Warn);
                         return Ok(());
                     }
                 };
@@ -169,7 +196,7 @@ pub async fn handle_connection(
                         ).await;
 
                         if !is_signed_properly {
-                            eprintln!("Invalid signature from {addr}");
+                            pluton_log(&format!("Invalid signature from {addr}"), Importance::Warn);
                             return Ok(());
                         }
 
@@ -178,9 +205,13 @@ pub async fn handle_connection(
                         let since_the_epoch = time_now.duration_since(UNIX_EPOCH).unwrap();
                         let since_epoch_seconds = since_the_epoch.as_secs() as i64;
 
+
+                        // This assumes that the attachments are already valid, should we assume
+                        // that?
                         let broadcast_message = definitions::TextNetworkMessage::ServerText(definitions::ServerTextMessage {
                             plaintext: text_msg.plaintext.trim().to_string(),
                             sender: public_key,
+                            attachments: text_msg.attachments,
                             timestamp: since_epoch_seconds,
                             channel_id: text_msg.channel.id
                         });
@@ -189,7 +220,7 @@ pub async fn handle_connection(
                         if let definitions::TextNetworkMessage::ServerText(msg) = &broadcast_message 
                             && let Err(e) = database::add_message(msg, text_msg.channel, database.clone()).await
                         {
-                            eprintln!("add_message failed: {e}");
+                            pluton_log(&format!("add_message failed: {e}"), Importance::Error);
                         }
 
 
@@ -201,7 +232,7 @@ pub async fn handle_connection(
                             peers.iter().filter(|(peer_addr, _)| self_ping || *peer_addr != &addr).map(|(_, ws_sink)| ws_sink);
 
                         for recp in broadcast_recipients {
-                            println!("Sending to {addr}");
+                            pluton_log(&format!("Sending to {addr}"), Importance::Info);
                             recp.tx.unbounded_send(Message::Text(serde_json::to_string(&broadcast_message).expect("unable to serde").into())).unwrap();
                         }
                     }
@@ -246,7 +277,7 @@ pub async fn handle_connection(
                         let safe_permission = match permission {
                             Ok(m) => m,
                             Err(e) => {
-                                eprintln!("Error when checking role permissions: {e}");
+                                pluton_log(&format!("Error when checking role permissions: {e}"), Importance::Error);
                                 false
                             }
                         };
@@ -275,15 +306,5 @@ pub async fn handle_connection(
     pin_mut!(broadcast_incoming, receive_from_others);
     future::select(broadcast_incoming, receive_from_others).await;
 
-    println!("{} disconnected", &addr);
-
-    let leave_alert = definitions::TextNetworkMessage::UserLeave(public_key);
-
-    let peer_lock = peer_map.lock().await;
-
-    for peer in peer_lock.values() {
-        peer.tx.unbounded_send(Message::Text(serde_json::to_string(&leave_alert).expect("unable to serde").into())).unwrap();
-    }
-
-    peer_map.lock().await.remove(&addr);
+    Ok(())
 }

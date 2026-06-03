@@ -5,11 +5,13 @@ use std::{
 use libsql::{Builder, params};
 
 use pluton_core::{cryptography::{sign_message, verify_signature}, networking::definitions::{self, UserOverview}};
+use pluton_core::helper::logging::{pluton_log, Importance};
 mod database;
 mod helper;
 mod connections;
 mod moderation;
 mod home;
+mod http;
 
 use tokio::{net::{TcpListener, TcpStream}, sync::{broadcast, Mutex}};
 
@@ -37,7 +39,7 @@ pub async fn start_server() -> anyhow::Result<()> {
         let port: String = row.get(1)?;
         server_name = row.get(2)?;
         addr = format!("{}:{}", ip, port);
-        println!("Attempting to connect to {}", ip);
+        pluton_log(&format!("Attempting to connect to {}", ip), Importance::Info);
     }
 
     let state = helper::PeerMap::new(Mutex::new(HashMap::new()));
@@ -52,18 +54,24 @@ pub async fn start_server() -> anyhow::Result<()> {
     // Create the event loop and TCP listener we'll accept connections on.
     let try_socket = TcpListener::bind(&addr).await;
     let listener = try_socket.expect("Failed to bind");
-    println!("Listening on: {}", addr);
+    pluton_log(&format!("Listening on: {}", addr), Importance::Info);
+
+    let http_handle = tokio::spawn(http::start_http_server(db.clone(), state.clone()));
 
     // Let's spawn the handling of each connection in a separate task.
-    while let Ok((stream, addr)) = listener.accept().await {
-        tokio::spawn(connections::handle_connection(
-            state.clone(),
-            stream,
-            addr,
-            db.clone(),
-            server_info.clone()
-        ));
-    }
+    let tcp_handle = tokio::spawn(async move {
+        while let Ok((stream, addr)) = listener.accept().await {
+            tokio::spawn(connections::handle_connection(
+                state.clone(),
+                stream,
+                addr,
+                db.clone(),
+                server_info.clone()
+            ));
+        }
+    });
+
+    tokio::try_join!(http_handle, tcp_handle)?;
 
     Ok(())
 }

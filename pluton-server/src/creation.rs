@@ -157,6 +157,19 @@ pub async fn create_server() -> anyhow::Result<()> {
         );", ()
     ).await?;
 
+    // Files
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY,
+            uploader BLOB NOT NULL,
+            file_name TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL,
+            file_data BLOB NOT NULL,
+            FOREIGN KEY (uploader) REFERENCES users(public_key)
+        );", ()
+    ).await?;
+
     // Messages
     conn.execute(
         "CREATE TABLE IF NOT EXISTS messages (
@@ -165,7 +178,7 @@ pub async fn create_server() -> anyhow::Result<()> {
             plaintext TEXT NOT NULL,
             timestamp INTEGER NOT NULL,  
             channel_id INTEGER NOT NULL,
-            FOREIGN KEY (channel_id) REFERENCES channels(id)   
+            FOREIGN KEY (channel_id) REFERENCES channels(id)
         );", ()
     ).await?;
 
@@ -174,15 +187,14 @@ pub async fn create_server() -> anyhow::Result<()> {
         ON messages(channel_id, timestamp DESC, id DESC);", ()
     ).await?;
 
-    // Files
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS files (
-            id INTEGER PRIMARY KEY,
-            uploader BLOB NOT NULL,
-            file_name TEXT NOT NULL,
-            file_data BLOB NOT NULL,
-            timestamp INTEGER NOT NULL,
-            FOREIGN KEY (uploader) REFERENCES users(public_key)
+        "CREATE TABLE IF NOT EXISTS message_attachments (
+            message_id INTEGER NOT NULL,
+            file_id INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (message_id, file_id),
+            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+            FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
         );", ()
     ).await?;
 

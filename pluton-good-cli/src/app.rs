@@ -25,6 +25,11 @@ pub const COMMANDS: &[Command] = &[
         usage: "/kick <user> <reason>",
         description: "Kick a user from the server",
     },
+    Command {
+        name: "/download",
+        usage: "/download <id>",
+        description: "Download a file from its ID",
+    },
 ];
 
 /// A single chat message ready for display.
@@ -33,6 +38,7 @@ pub struct DisplayMessage {
     pub sender: String,
     pub text: String,
     pub time: String,
+    pub attachments: Vec<definitions::FileDescriptor>,
 }
 
 /// Which screen the TUI is showing.
@@ -89,6 +95,7 @@ pub struct App {
     // Login
     pub login_field: LoginField,
     pub server_url: String,
+    pub server_ip: String,
     pub username: String,
     pub password: String,
     pub login_error: Option<String>,
@@ -105,6 +112,7 @@ pub struct App {
 
     // Connection status
     pub status_message: Option<String>,
+    pub session_id: String,
 
     // Chat state
     pub server_name: String,
@@ -113,6 +121,7 @@ pub struct App {
     pub voice_channels: Vec<definitions::Channel>,
     pub current_channel: definitions::Channel,
     pub peers: HashMap<VerifyingKey, definitions::Peer>,
+    pub current_files: Vec<definitions::FileDescriptor>,
     pub input: String,
     pub input_cursor: usize,
     pub selected_channel: usize,
@@ -120,6 +129,7 @@ pub struct App {
 
     // Signing key (available after login)
     pub signing_key: Option<SigningKey>,
+    pub verifying_key: Option<VerifyingKey>,
     pub current_message_id: u32,
 
     // Command autocomplete
@@ -127,6 +137,9 @@ pub struct App {
 
     // Quit flag
     pub quit: bool,
+
+    // Print out log information
+    pub verbose: bool
 }
 
 impl App {
@@ -135,6 +148,7 @@ impl App {
             screen: Screen::Login,
             login_field: LoginField::ServerUrl,
             server_url: String::from("ws://127.0.0.1:6767"),
+            server_ip: String::from("http://127.0.0.1"),
             username: String::new(),
             password: String::new(),
             login_error: None,
@@ -147,6 +161,7 @@ impl App {
             register_password: String::new(),
             register_error: None,
             status_message: None,
+            session_id: String::new(),
             server_name: String::new(),
             messages: Vec::new(),
             channels: Vec::new(),
@@ -156,14 +171,18 @@ impl App {
                 name: String::from("general"),
             },
             peers: HashMap::new(),
+            current_files: Vec::new(),
             input: String::new(),
             input_cursor: 0,
             selected_channel: 0,
             channel_list_focused: false,
             signing_key: None,
+            verifying_key: None,
             current_message_id: 0,
             command_selected: 0,
             quit: false,
+
+            verbose: true,
         }
     }
 
@@ -178,14 +197,14 @@ impl App {
         self.accounts.get(self.selected_account).map(|s| s.as_str())
     }
 
-    pub fn add_message(&mut self, sender: String, text: String, timestamp: i64) {
+    pub fn add_message(&mut self, sender: String, text: String, timestamp: i64, attachments: Vec<definitions::FileDescriptor>) {
         let time = Utc
             .timestamp_opt(timestamp, 0)
             .single()
             .map(|dt| dt.with_timezone(&Local).format("%H:%M").to_string())
             .unwrap_or_default();
 
-        self.messages.push(DisplayMessage { sender, text, time });
+        self.messages.push(DisplayMessage { sender, text, time, attachments });
     }
 
     pub fn resolve_username(&self, key: &VerifyingKey) -> String {

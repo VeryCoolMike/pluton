@@ -3,6 +3,7 @@ mod network;
 mod ui;
 
 use std::collections::HashMap;
+use std::path;
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
@@ -21,12 +22,18 @@ use ed25519_dalek::Signer;
 use pluton_core::cryptography::get_signing_key;
 use pluton_core::networking::definitions;
 use pluton_core::{account_management, helper};
+use pluton_core::helper::logging::*;
 
 use app::{App, LoginField, RegisterField, Screen};
 use network::NetEvent;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Setup logging
+    set_program_name(String::from("Pluton TUI"));
+    set_log_directory(default_log_dir().expect("Unable to find home directory"));
+    init_logging().await?;
+
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -182,7 +189,7 @@ async fn run_app(
                                 }
                                 Err(e) => {
                                     app.register_error =
-                                        Some(format!("Sign up failed: {e}"));
+                                        Some(format!("Sign up failed: {e:#}"));
                                 }
                             }
                         } else {
@@ -195,7 +202,7 @@ async fn run_app(
                         }
                     }
                     Screen::Chat => {
-                        handle_chat_input(&mut app, key.code, key.modifiers, &ws_tx);
+                        handle_chat_input(&mut app, key.code, key.modifiers, &ws_tx).await;
                     }
                     Screen::ServerSettings | Screen::UserSettings => {}
                 }
@@ -212,6 +219,12 @@ async fn run_app(
                     }
                     NetEvent::SigningKey(key) => {
                         app.signing_key = Some(key);
+                    }
+                    NetEvent::VerifyingKey(key) => {
+                        app.verifying_key = Some(key);
+                    }
+                    NetEvent::SessionGranted(session_id) => {
+                        app.session_id = session_id;
                     }
                     NetEvent::Error(e) => {
                         app.login_error = Some(e);
@@ -303,7 +316,7 @@ fn handle_login_input(app: &mut App, key: KeyCode) {
     }
 }
 
-fn handle_chat_input(
+async fn handle_chat_input(
     app: &mut App,
     key: KeyCode,
     modifiers: KeyModifiers,
@@ -419,6 +432,44 @@ fn handle_chat_input(
                     }
                 }
                 return;
+            } else if text.starts_with("/download ") {
+                let args: Vec<&str> = text.split_whitespace().collect();
+                if args.len() != 2 {
+                    pluton_log(&format!("Incorrect arguement count for download command, should be 2, was {}", args.len()), Importance::Error);
+                    return;
+                }
+
+                let Ok(id) = args[1].parse::<u64>() else {
+                    pluton_log("Unable to convert ID into u64 for download command", Importance::Error);
+                    return;
+                };
+
+                let file_meta = match pluton_core::networking::download_file_meta(app.server_ip.clone(), id).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        pluton_log(&format!("Unable to download file metadata: {e}"), Importance::Error);
+                        return;
+                    }
+                };
+
+                let file_data = match pluton_core::networking::download_file(app.server_ip.clone(), id).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        pluton_log(&format!("Unable to download file: {e}"), Importance::Error);
+                        return
+                    }
+                };
+
+                if let Some(handle) = AsyncFileDialog::new()
+                    .set_directory("/home")
+                    .set_file_name(file_meta.file_name)
+                    .save_file()
+                    .await
+                {
+                    let _ = handle.write(&file_data).await.map_err(|e| {
+                        pluton_log(&format!("Failed to save file: {e}"), Importance::Error);
+                    });
+                };
             }
 
             // Normal message
@@ -430,12 +481,15 @@ fn handle_chat_input(
                         plaintext: text,
                         signed_message: signed,
                         id,
+                        attachments: app.current_files.clone(),
                         channel: app.current_channel.clone(),
                     },
                 );
                 if let Ok(json) = serde_json::to_string(&msg) {
                     let _ = tx.send(Message::Text(json.into()));
                 }
+
+                app.current_files.clear();
             }
         }
         KeyCode::Backspace => app.input_backspace(),
@@ -450,18 +504,55 @@ fn handle_chat_input(
         KeyCode::Esc => app.quit = true,
         KeyCode::Char(c) => {
             if c == 'u' && modifiers.contains(KeyModifiers::ALT) {
-                tokio::spawn(async move {
-                    let Some(file) =  AsyncFileDialog::new()
-                        .add_filter("image", &["png", "jpg", "jpeg"])
-                        .set_directory("/")
-                        .pick_file()
-                        .await
-                    else {
-                        return;
-                    };
+                let server_ip = app.server_ip.clone();
+                let session_id = app.session_id.clone();
 
-                    let data = file.read().await;
-                });
+                let verifying_key = match app.verifying_key.clone() {
+                    Some(m) => m,
+                    None => {
+                        return
+                    }
+                };
+
+                let Some(file) = AsyncFileDialog::new()
+                    .add_filter("any", &["*"])
+                    .add_filter("image", &["png", "jpg", "jpeg", "webp"])
+                    .set_directory("/")
+                    .pick_file()
+                    .await
+                else {
+                    return;
+                };
+
+                let data = file.read().await;
+
+                let content_type = infer::get(&data)
+                    .map(|t| t.mime_type().to_string())
+                    .unwrap_or_else(|| {
+                        mime_guess::from_path(file.file_name())
+                            .first_or_octet_stream()
+                            .essence_str()
+                            .to_string()
+                    });
+
+
+                // We need to first upload the files and receive their IDs
+                
+                let file_id = pluton_core::networking::upload_file(
+                    server_ip,
+                    session_id,
+                    file.file_name(),
+                    data.clone(),
+                    content_type
+                ).await.expect("Error when uploading file");
+
+                let constructed_file = definitions::FileDescriptor {
+                    id: file_id,
+                    file_name: file.file_name(),
+                    file_size: data.len() as u64
+                };
+
+                app.current_files.push(constructed_file);
             } else {
                 app.input_insert(c);
             }
@@ -478,7 +569,7 @@ fn handle_incoming(msg: definitions::TextNetworkMessage, app: &mut App) {
                 return;
             }
             let sender = app.resolve_username(&text_msg.sender);
-            app.add_message(sender, text_msg.plaintext, text_msg.timestamp);
+            app.add_message(sender, text_msg.plaintext, text_msg.timestamp, text_msg.attachments);
         }
         definitions::TextNetworkMessage::ServerStatus(status) => {
             app.server_name = status.name;
@@ -501,7 +592,7 @@ fn handle_incoming(msg: definitions::TextNetworkMessage, app: &mut App) {
             app.messages.clear();
             for text_msg in &status.messages {
                 let sender = app.resolve_username(&text_msg.sender);
-                app.add_message(sender, text_msg.plaintext.clone(), text_msg.timestamp);
+                app.add_message(sender, text_msg.plaintext.clone(), text_msg.timestamp, text_msg.attachments.clone());
             }
         }
         definitions::TextNetworkMessage::UserJoin(user) => {
@@ -524,7 +615,7 @@ fn handle_incoming(msg: definitions::TextNetworkMessage, app: &mut App) {
             app.messages.clear();
             for text_msg in &response.messages {
                 let sender = app.resolve_username(&text_msg.sender);
-                app.add_message(sender, text_msg.plaintext.clone(), text_msg.timestamp);
+                app.add_message(sender, text_msg.plaintext.clone(), text_msg.timestamp, text_msg.attachments.clone());
             }
         }
         definitions::TextNetworkMessage::UserStatusChange(change) => {
@@ -542,7 +633,7 @@ async fn run_network(
     mut ws_rx: mpsc::UnboundedReceiver<Message>,
     url: String,
     username: String,
-    password: String,
+    password: String
 ) {
     // Sign in
     if let Err(e) = account_management::sign_in(username.clone(), password.clone()).await {
@@ -590,7 +681,7 @@ async fn run_network(
     let (mut outgoing, mut incoming) = ws_stream.split();
 
     // Auth handshake
-    let _session_id =
+    let session_id =
         match pluton_core::networking::auth_handshake::auth_handshake_client(
             &mut outgoing,
             &mut incoming,
@@ -615,8 +706,12 @@ async fn run_network(
             }
         };
 
+    let _ = event_tx.send(NetEvent::SessionGranted(session_id));
+
     // Send signing key to app
     let _ = event_tx.send(NetEvent::SigningKey(signing_key));
+
+    let _ = event_tx.send(NetEvent::VerifyingKey(public_key));
 
     // Relay messages between server and TUI
     loop {

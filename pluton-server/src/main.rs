@@ -1,6 +1,7 @@
 use std::env;
 
 use cliclack::{clear_screen, set_theme};
+use pluton_core::helper::logging::*;
 
 mod theming;
 mod creation;
@@ -9,6 +10,12 @@ mod server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    set_verbose(true); 
+    set_info_log(true);
+    set_program_name(String::from("Pluton Server"));
+    set_log_directory(default_log_dir().expect("no home directory"));
+    init_logging().await?;
+
     clear_screen()?;
     set_theme(theming::MagentaTheme);
 

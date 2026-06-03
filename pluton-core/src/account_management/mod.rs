@@ -1,5 +1,5 @@
 use std::{fs::create_dir, io::prelude::*, time::{SystemTime, UNIX_EPOCH}};
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use ed25519_dalek::{SigningKey, Verifier, VerifyingKey};
 use serde::{Serialize, Deserialize};
 use std::path::{Path, PathBuf};
@@ -112,11 +112,8 @@ pub async fn sign_in(username: String, password: String) -> anyhow::Result<()> {
 
 // This function will return Err if anything is incorrect such as already existing account, etc...
 pub async fn sign_up(username: String, password: String, home_address: String) -> anyhow::Result<()> {
-    let mut cfg: Settings = if let Ok(settings) = confy::load("pluton", None) {
-        settings
-    } else {
-        return Err(anyhow::anyhow!("Config could not be found"))
-    };
+    let mut cfg: Settings = confy::load("pluton", None)
+        .context("failed to load pluton config")?;
 
     cfg.warning = "WARNING! Changing settings in pluton.toml manually can cause permanent account loss!\nAll settings that should be changed can be changed in the Pluton GUI safely!".to_string();
 
