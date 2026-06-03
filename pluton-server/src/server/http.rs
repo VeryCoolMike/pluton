@@ -2,9 +2,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use axum::{
-    Router, extract::{Multipart, State}, http::StatusCode, response::IntoResponse, routing::post, Json
+    Router, extract::{Multipart, State, Path, DefaultBodyLimit}, http::StatusCode, response::IntoResponse, routing::{post, get}, Json
 };
+use pluton_core::helper::logging::{pluton_log, Importance};
 use libsql::{params, Database};
+use pluton_core::networking::definitions;
+use reqwest::header;
 use super::{helper::PeerMap, database};
 
 #[derive(Clone)]
@@ -21,10 +24,13 @@ pub async fn start_http_server(db: Arc<Database>, peers: PeerMap) {
 
     let app = Router::new()
         .route("/upload_file", post(upload_file))
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
+        .route("/download_file/{file_id}", get(download_file))
+        .route("/download_file_meta/{file_id}", get(download_file_meta))
         .with_state(shared_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 6766));
-    println!("Pluton file server listening on {}", addr);
+    pluton_log(&format!("Pluton file server listening on {}", addr), Importance::Info);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -56,6 +62,8 @@ async fn upload_file(
     let file_name = file_name.ok_or(StatusCode::BAD_REQUEST)?;
     let file_data = file_data.ok_or(StatusCode::BAD_REQUEST)?;
 
+    pluton_log(&format!("Uploading file: {file_name}"), Importance::Info);
+
     // Validate session ID
     let peers = state.peers.lock().await;
     let uploader = peers.values()
@@ -74,5 +82,49 @@ async fn upload_file(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    pluton_log(&format!("Finished uploading file: {file_name}"), Importance::Info);
     Ok(Json(file_id))
+}
+
+async fn download_file(
+    Path(file_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let file_id = file_id.parse::<u64>().map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let (file_data, file_name, mime_type) = database::fetch_file(file_id, state.db.clone()).await.map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let ascii_fallback: String = file_name
+        .chars()
+        .map(|c| if c.is_ascii_graphic() && c != '"' && c != '\\' { c } else { '_' })
+        .collect();
+
+    let disposition = format!(
+        "attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{}",
+        urlencoding::encode(&file_name),
+    );
+
+    let headers = [
+        (header::CONTENT_TYPE, mime_type),
+        (header::CONTENT_DISPOSITION, disposition),
+    ];
+
+    Ok((headers, file_data))
+}
+
+async fn download_file_meta(
+    Path(file_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<definitions::FileDescriptor>, StatusCode> {
+    let file_id = file_id.parse::<u64>().map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let (file_name, _, file_size) = database::fetch_file_meta(file_id, state.db.clone()).await.map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let descriptor = definitions::FileDescriptor {
+        id: file_id,
+        file_name: file_name,
+        file_size: file_size
+    };
+
+    Ok(axum::Json(descriptor))
 }

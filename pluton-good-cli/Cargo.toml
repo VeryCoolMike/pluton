@@ -11,6 +11,9 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 ed25519-dalek = "2.2.0"
 futures-channel = "0.3.31"
 futures-util = "0.3.31"
+image = "0.25.10"
+infer = "0.19.0"
+mime_guess = "2.0.5"
 pluton-core = { path = "../pluton-core/" }
 ratatui = "0.29"
 rfd = "0.17.2"

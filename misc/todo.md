@@ -1,12 +1,23 @@
 # pluton-server
-- [ ] Add file uploads
+- [x] Add file uploads
+- [x] Make it so that when a client joins you receive message attachments
 - [ ] Add VC
+- [ ] Fix bug with user not being removed from peer map (or something) when being disconnected
+
+## pluton-server-http
+- [x] Add file uploads
+- [ ] Add HTTPS support
+- [ ] Fix bug with large file uploads causing 400
 
 # pluton-core
 
 # pluton-home
 
 # pluton-cli
+- [x] Add file uploads
+- [x] Add file rendering
+- [ ] Add file downloads
+- [x] Fix sending file data twice (once when uploading once when sending message)
 
 # bug fixes
 

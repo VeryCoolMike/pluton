@@ -5,6 +5,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
 use pluton_core::networking::definitions::UserStatus;
+use pluton_core::helper::general::size_to_descriptor;
 
 use crate::app::{App, LoginField, RegisterField, Screen};
 
@@ -450,8 +451,8 @@ fn draw_chat_area(frame: &mut Frame, app: &App, area: Rect) {
     let msg_lines: Vec<Line> = app
         .messages
         .iter()
-        .map(|m| {
-            Line::from(vec![
+        .flat_map(|m| {
+            let mut lines = vec![Line::from(vec![
                 Span::styled(
                     format!("{} ", m.time),
                     Style::default().fg(Color::DarkGray),
@@ -463,7 +464,16 @@ fn draw_chat_area(frame: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(&m.text),
-            ])
+            ])];
+
+            lines.extend(m.attachments.iter().map(|a| {
+                Line::from(Span::styled(
+                    format!("[{} - ID:{} - {}]", a.file_name, a.id, size_to_descriptor(a.file_size)),
+                    Style::default().fg(Color::Yellow)
+                ))
+            }));
+
+            lines
         })
         .collect();
 

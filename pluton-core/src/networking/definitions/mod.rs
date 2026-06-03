@@ -43,6 +43,7 @@ pub enum TextNetworkMessage {
     UserLeave(VerifyingKey), // public key
     ClientRequestMessages(ClientRequestMessages),
     ServerRequestMessages(ServerRequestMessages),
+    ServerSuccess(u64), // ID of item
 
     // Moderation
     ClientKickRequest(ClientKickRequest),
@@ -54,6 +55,7 @@ pub struct ClientTextMessage {
     pub plaintext: String,
     pub signed_message: Signature,
     pub id: u32,
+    pub attachments: Vec<FileDescriptor>,
     pub channel: Channel
 }
 
@@ -61,6 +63,7 @@ pub struct ClientTextMessage {
 pub struct ServerTextMessage {
     pub plaintext: String,
     pub sender: VerifyingKey,
+    pub attachments: Vec<FileDescriptor>,
     pub channel_id: u64,
     pub timestamp: i64 // Time from UNIX EPOCH
 }
@@ -138,4 +141,19 @@ pub struct ServerKickRequest {
     pub recipient: VerifyingKey,
     pub reason: String,
     pub sender: String
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct File {
+    pub id: u64,
+    pub uploader: VerifyingKey,
+    pub file_name: String,
+    pub file_data: Vec<u8>
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileDescriptor {
+    pub id: u64, // ID of file
+    pub file_name: String,
+    pub file_size: u64 // Size in Bytes
 }
